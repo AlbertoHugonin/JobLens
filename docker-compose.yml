@@ -68,7 +68,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8090/health']
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8100/health']
       interval: 10s
       timeout: 5s
       retries: 10
