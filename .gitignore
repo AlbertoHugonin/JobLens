@@ -1,0 +1,20 @@
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.vite/
+
+apps/worker/target/
+
+# Provider HAR captures and exported credentials can contain real cookies,
+# CSRF tokens and auth headers. Never commit them.
+*.har
+docs/har_*
+secrets/
+*.secret.json

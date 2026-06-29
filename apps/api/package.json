@@ -1,0 +1,28 @@
+{
+  "name": "@joblens/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
+    "db:migrate": "tsx src/db/runMigrations.ts",
+    "dev": "tsx watch src/server.ts",
+    "lint": "eslint src test --max-warnings=0",
+    "start": "node dist/server.js",
+    "test": "vitest run --exclude test/schema.db.test.ts",
+    "test:db": "vitest run test/schema.db.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "fastify": "^5.0.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

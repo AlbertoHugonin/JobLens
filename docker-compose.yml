@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-joblens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-joblens}
+      POSTGRES_DB: ${POSTGRES_DB:-joblens}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      API_CORS_ORIGIN: ${API_CORS_ORIGIN:-http://localhost:5173}
+      API_RUN_MIGRATIONS: ${API_RUN_MIGRATIONS:-true}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://joblens:joblens@postgres:5432/joblens}
+      AI_ENDPOINT_URL: ${AI_ENDPOINT_URL:-}
+    ports:
+      - '${API_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/v1/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      WORKER_HOST: 0.0.0.0
+      WORKER_PORT: 8090
+      WORKER_RUN_LOOP: ${WORKER_RUN_LOOP:-true}
+      WORKER_POLL_MS: ${WORKER_POLL_MS:-1000}
+      WORKER_HEARTBEAT_MS: ${WORKER_HEARTBEAT_MS:-1000}
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-30}
+      WORKER_DUMMY_ACTIVITY_MS: ${WORKER_DUMMY_ACTIVITY_MS:-5000}
+      WORKER_LINKEDIN_PAGE_DELAY_MS: ${WORKER_LINKEDIN_PAGE_DELAY_MS:-1200}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://joblens:joblens@postgres:5432/joblens}
+    ports:
+      - '${WORKER_PORT:-8090}:8090'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8090/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000}
+    restart: unless-stopped
+    ports:
+      - '${FRONTEND_PORT:-5173}:80'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

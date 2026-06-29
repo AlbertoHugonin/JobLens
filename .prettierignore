@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.vite/
+apps/worker/target/
+docs/
+apps/api/src/db/migrations/
+package-lock.json
