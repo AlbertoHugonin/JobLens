@@ -54,7 +54,7 @@ services:
     environment:
       RUST_LOG: ${RUST_LOG:-info}
       WORKER_HOST: 0.0.0.0
-      WORKER_PORT: 8090
+      WORKER_PORT: ${WORKER_PORT:-8090}
       WORKER_RUN_LOOP: ${WORKER_RUN_LOOP:-true}
       WORKER_POLL_MS: ${WORKER_POLL_MS:-1000}
       WORKER_HEARTBEAT_MS: ${WORKER_HEARTBEAT_MS:-1000}
@@ -63,7 +63,7 @@ services:
       WORKER_LINKEDIN_PAGE_DELAY_MS: ${WORKER_LINKEDIN_PAGE_DELAY_MS:-1200}
       DATABASE_URL: ${DATABASE_URL:-postgresql://joblens:joblens@postgres:5432/joblens}
     ports:
-      - '${WORKER_PORT:-8090}:8090'
+      - '${WORKER_PORT:-8090}:${WORKER_PORT:-8090}'
     depends_on:
       postgres:
         condition: service_healthy
