@@ -69,14 +69,20 @@ pub(crate) async fn enqueue_automatic_review_for_job(
           WHERE activity_type = 'ai_review'
             AND subject_type = 'job'
             AND subject_id = $1::uuid
-            AND status IN ('queued', 'running', 'interrupted')
+            AND (
+              status IN ('queued', 'running', 'interrupted')
+              OR (
+                status = 'failed'
+                AND payload->>'mode' = 'automatic'
+                AND payload->>'modelName' = $5
+              )
+            )
         )
         AND NOT EXISTS (
           SELECT 1
           FROM job_reviews
           WHERE job_id = $1::uuid
             AND model_name = $5
-            AND status = 'success'
             AND metrics->>'mode' = 'automatic'
         )
         RETURNING id::text AS id
@@ -126,14 +132,20 @@ pub(crate) async fn enqueue_automatic_reviews_for_search_ready_jobs(
               WHERE activity_type = 'ai_review'
                 AND subject_type = 'job'
                 AND subject_id = jobs.id
-                AND status IN ('queued', 'running', 'interrupted')
+                AND (
+                  status IN ('queued', 'running', 'interrupted')
+                  OR (
+                    status = 'failed'
+                    AND payload->>'mode' = 'automatic'
+                    AND payload->>'modelName' = $5
+                  )
+                )
             )
             AND NOT EXISTS (
               SELECT 1
               FROM job_reviews
               WHERE job_id = jobs.id
                 AND model_name = $5
-                AND status = 'success'
                 AND metrics->>'mode' = 'automatic'
             )
         ),

@@ -1074,6 +1074,12 @@ h6,
   color: var(--bs-danger-text-emphasis);
 }
 
+.job-decision-filter-option-secondary.is-active {
+  background: var(--bs-secondary-bg-subtle);
+  border-color: var(--bs-secondary-border-subtle);
+  color: var(--bs-secondary-text-emphasis);
+}
+
 @media (max-width: 575.98px) {
   .app-container {
     padding-left: 1.15rem;

@@ -1342,6 +1342,10 @@ describe('database migrations', () => {
       method: 'GET',
       url: '/api/v1/jobs?text=M11&decision=apply&modelName=priority&limit=10&offset=0',
     });
+    const missingReviewFilterResponse = await app.inject({
+      method: 'GET',
+      url: '/api/v1/jobs?text=M11&decision=none&limit=10&offset=0',
+    });
     const aiScoreSortResponse = await app.inject({
       method: 'GET',
       url: '/api/v1/jobs?text=M11&sortBy=aiScore&sortDir=desc&limit=10&offset=0',
@@ -1412,6 +1416,18 @@ describe('database migrations', () => {
     });
     expect(priorityFilterResponse.statusCode).toBe(200);
     expect(priorityFilterResponse.json()).toMatchObject({
+      meta: {
+        total: 1,
+      },
+    });
+    expect(missingReviewFilterResponse.statusCode).toBe(200);
+    expect(missingReviewFilterResponse.json()).toMatchObject({
+      data: [
+        expect.objectContaining({
+          id: batchJobId,
+          latestReview: null,
+        }),
+      ],
       meta: {
         total: 1,
       },

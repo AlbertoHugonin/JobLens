@@ -690,6 +690,42 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
         &automatic_model_name,
     )
     .await?;
+    insert_failed_automatic_ai_review_record(
+        pool,
+        &collect_fixture.provider_id,
+        "m7-3",
+        &automatic_model_name,
+    )
+    .await?;
+    let failed_review_job_id =
+        read_job_id_by_external_id(pool, &collect_fixture.provider_id, "m7-3").await?;
+    assert_eq!(
+        enqueue_automatic_review_for_job(
+            pool,
+            &failed_review_job_id,
+            &collect_fixture.activity_id,
+        )
+        .await?,
+        AutomaticReviewQueueOutcome::AlreadyCovered
+    );
+    insert_failed_automatic_ai_review_activity(
+        pool,
+        &collect_fixture.provider_id,
+        "m7-1",
+        &automatic_model_name,
+    )
+    .await?;
+    let failed_activity_job_id =
+        read_job_id_by_external_id(pool, &collect_fixture.provider_id, "m7-1").await?;
+    assert_eq!(
+        enqueue_automatic_review_for_job(
+            pool,
+            &failed_activity_job_id,
+            &collect_fixture.activity_id,
+        )
+        .await?,
+        AutomaticReviewQueueOutcome::AlreadyCovered
+    );
     assert_linkedin_collection_continues_when_raw_payload_storage_fails(
         pool,
         &config,
@@ -1109,6 +1145,86 @@ async fn configure_automatic_ai_review(pool: &PgPool) -> Result<String> {
     .await?;
 
     Ok(model_name)
+}
+
+async fn insert_failed_automatic_ai_review_record(
+    pool: &PgPool,
+    provider_id: &str,
+    external_id: &str,
+    model_name: &str,
+) -> Result<()> {
+    let job_id = read_job_id_by_external_id(pool, provider_id, external_id).await?;
+    sqlx::query(
+        r#"
+            INSERT INTO job_reviews(
+              job_id,
+              model_name,
+              profile_hash,
+              rules_hash,
+              status,
+              result,
+              metrics
+            )
+            VALUES (
+              $1::uuid,
+              $2,
+              'test-profile',
+              'test-rules',
+              'failed',
+              '{}'::jsonb,
+              '{"mode":"automatic"}'::jsonb
+            )
+            "#,
+    )
+    .bind(&job_id)
+    .bind(model_name)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn insert_failed_automatic_ai_review_activity(
+    pool: &PgPool,
+    provider_id: &str,
+    external_id: &str,
+    model_name: &str,
+) -> Result<()> {
+    let job_id = read_job_id_by_external_id(pool, provider_id, external_id).await?;
+    sqlx::query(
+        r#"
+            INSERT INTO activities(
+              activity_type,
+              status,
+              subject_type,
+              subject_id,
+              payload,
+              source,
+              progress_total,
+              error
+            )
+            VALUES (
+              'ai_review',
+              'failed',
+              'job',
+              $1::uuid,
+              $2::jsonb,
+              'worker-test',
+              4,
+              'fixture automatic review failure'
+            )
+            "#,
+    )
+    .bind(&job_id)
+    .bind(json!({
+        "jobId": job_id,
+        "mode": "automatic",
+        "modelName": model_name,
+    }))
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 async fn process_next_activity_of_type(

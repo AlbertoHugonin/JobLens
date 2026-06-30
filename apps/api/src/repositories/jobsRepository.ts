@@ -8,6 +8,7 @@ export type JobAvailabilityStatus =
 
 export type JobLocalStatus = 'applied' | 'new' | 'saved' | 'viewed';
 export type JobReviewDecision = 'apply' | 'maybe' | 'reject';
+export type JobReviewDecisionFilter = JobReviewDecision | 'none';
 export type JobScope = 'all' | 'standard';
 export type JobSortBy = 'aiScore' | 'publishedAt' | 'repostedAt';
 export type JobSortDir = 'asc' | 'desc';
@@ -111,7 +112,7 @@ export interface JobInsightsRecord {
 
 export interface JobFilters {
   availabilityStatus?: JobAvailabilityStatus | undefined;
-  decision?: JobReviewDecision[] | undefined;
+  decision?: JobReviewDecisionFilter[] | undefined;
   limit: number;
   localStatus?: JobLocalStatus | undefined;
   location?: string | undefined;
@@ -361,8 +362,18 @@ function buildJobConditions(filters: JobFilters): QueryParts {
   }
 
   if (filters.decision && filters.decision.length > 0) {
-    const params = filters.decision.map((decision) => addParam(decision));
-    conditions.push(`latest_review.decision IN (${params.join(', ')})`);
+    const decisions = filters.decision.filter(
+      (decision): decision is JobReviewDecision => decision !== 'none',
+    );
+    const decisionConditions: string[] = [];
+    if (decisions.length > 0) {
+      const params = decisions.map((decision) => addParam(decision));
+      decisionConditions.push(`latest_review.decision IN (${params.join(', ')})`);
+    }
+    if (filters.decision.includes('none')) {
+      decisionConditions.push('latest_review.decision IS NULL');
+    }
+    conditions.push(`(${decisionConditions.join(' OR ')})`);
   }
 
   if (filters.modelName) {

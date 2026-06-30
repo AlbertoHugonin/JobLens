@@ -26,6 +26,7 @@ import {
   type JobFilters,
   type JobLocalStatus,
   type JobReviewDecision,
+  type JobReviewDecisionFilter,
   type JobScope,
   type JobSortBy,
   type JobSortDir,
@@ -81,11 +82,12 @@ const jobAvailabilityStatusValues = [
   'unavailable',
 ] as const;
 const reviewDecisionValues = ['apply', 'maybe', 'reject'] as const;
+const reviewDecisionFilterValues = [...reviewDecisionValues, 'none'] as const;
 const jobReviewModeValues = ['manual', 'automatic', 'benchmark'] as const;
 const jobWorkplaceModeValues = ['onsite', 'remote', 'hybrid'] as const;
 
 /** Parse the comma-separated `decision` query param into a validated list. */
-function parseDecisions(value: string | undefined): JobReviewDecision[] | undefined {
+function parseDecisions(value: string | undefined): JobReviewDecisionFilter[] | undefined {
   if (!value) {
     return undefined;
   }
@@ -93,8 +95,8 @@ function parseDecisions(value: string | undefined): JobReviewDecision[] | undefi
   const parsed = value
     .split(',')
     .map((item) => item.trim())
-    .filter((item): item is JobReviewDecision =>
-      (reviewDecisionValues as readonly string[]).includes(item),
+    .filter((item): item is JobReviewDecisionFilter =>
+      (reviewDecisionFilterValues as readonly string[]).includes(item),
     );
   return parsed.length > 0 ? parsed : undefined;
 }

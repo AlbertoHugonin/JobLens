@@ -13,10 +13,10 @@ import {
   getJobDecisionVariant,
   jobAvailabilityStatusOptions,
   jobLocalStatusOptions,
-  jobReviewDecisionOptions,
+  jobReviewDecisionFilterOptions,
   jobWorkplaceModeOptions,
   type JobFilters,
-  type JobReviewDecision,
+  type JobReviewDecisionFilter,
 } from '../../models/job';
 import type { Search } from '../../models/search';
 
@@ -129,7 +129,10 @@ export function JobFilterBar({
     setModelName(filters.modelName);
   }, [filters.location, filters.modelName, filters.text]);
 
-  const toggleDecision = (value: JobReviewDecision) => {
+  const decisionVariant = (value: JobReviewDecisionFilter) =>
+    value === 'none' ? 'secondary' : getJobDecisionVariant(value);
+
+  const toggleDecision = (value: JobReviewDecisionFilter) => {
     const selected = new Set(filters.decision);
     if (selected.has(value)) {
       selected.delete(value);
@@ -137,7 +140,7 @@ export function JobFilterBar({
       selected.add(value);
     }
     onChange({
-      decision: jobReviewDecisionOptions
+      decision: jobReviewDecisionFilterOptions
         .map((option) => option.value)
         .filter((decision) => selected.has(decision)),
     });
@@ -165,7 +168,7 @@ export function JobFilterBar({
   const decisionLabel =
     decisionCount === 0
       ? 'Decisione AI'
-      : `Decisione: ${optionLabel(jobReviewDecisionOptions, filters.decision[0] ?? '')}${
+      : `Decisione: ${optionLabel(jobReviewDecisionFilterOptions, filters.decision[0] ?? '')}${
           decisionCount > 1 ? ` +${decisionCount - 1}` : ''
         }`;
 
@@ -244,12 +247,12 @@ export function JobFilterBar({
           <div className="d-flex flex-wrap align-items-center gap-2">
             <FilterPill active={decisionCount > 0} label={decisionLabel} staysOpen>
               <div className="px-2 pb-1 form-eyebrow">Decisione AI</div>
-              {jobReviewDecisionOptions.map((option) => (
+              {jobReviewDecisionFilterOptions.map((option) => (
                 <button
                   aria-pressed={filters.decision.includes(option.value)}
                   className={[
                     'job-decision-filter-option',
-                    `job-decision-filter-option-${getJobDecisionVariant(option.value)}`,
+                    `job-decision-filter-option-${decisionVariant(option.value)}`,
                     filters.decision.includes(option.value) ? 'is-active' : '',
                   ].join(' ')}
                   key={option.value}
@@ -257,7 +260,7 @@ export function JobFilterBar({
                   type="button"
                 >
                   <span
-                    className={`d-inline-block rounded-circle bg-${getJobDecisionVariant(option.value)}`}
+                    className={`d-inline-block rounded-circle bg-${decisionVariant(option.value)}`}
                     style={{ height: 8, width: 8 }}
                   />
                   <span>{option.label}</span>

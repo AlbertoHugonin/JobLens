@@ -34,6 +34,8 @@ pub(crate) use activities::{claim_next_activity, mark_activity_failed, mark_acti
 #[cfg(test)]
 pub(crate) use ai::client::AiRuntime;
 #[cfg(test)]
+pub(crate) use ai::enqueue::{AutomaticReviewQueueOutcome, enqueue_automatic_review_for_job};
+#[cfg(test)]
 pub(crate) use ai::queue::is_ai_paused;
 #[cfg(test)]
 pub(crate) use config::WorkerConfig;

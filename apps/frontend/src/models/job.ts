@@ -8,6 +8,7 @@ export type JobAvailabilityStatus =
 
 export type JobLocalStatus = 'applied' | 'new' | 'saved' | 'viewed';
 export type JobReviewDecision = 'apply' | 'maybe' | 'reject';
+export type JobReviewDecisionFilter = JobReviewDecision | 'none';
 export type JobReviewMode = 'automatic' | 'benchmark' | 'manual';
 export type JobScope = 'all' | 'standard';
 export type JobSortBy = 'aiScore' | 'publishedAt' | 'repostedAt';
@@ -99,7 +100,7 @@ export interface JobList {
 
 export interface JobFilters {
   availabilityStatus: JobAvailabilityStatus | '';
-  decision: JobReviewDecision[];
+  decision: JobReviewDecisionFilter[];
   localStatus: JobLocalStatus | '';
   location: string;
   modelName: string;
@@ -168,6 +169,11 @@ export const jobReviewDecisionOptions: Array<{ label: string; value: JobReviewDe
   { label: 'Maybe', value: 'maybe' },
   { label: 'Reject', value: 'reject' },
 ];
+
+export const jobReviewDecisionFilterOptions: Array<{
+  label: string;
+  value: JobReviewDecisionFilter;
+}> = [...jobReviewDecisionOptions, { label: 'Mancante', value: 'none' }];
 
 export const jobWorkplaceModeOptions: Array<{ label: string; value: JobWorkplaceMode }> = [
   { label: 'In sede', value: 'onsite' },
