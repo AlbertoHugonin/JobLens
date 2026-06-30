@@ -8,6 +8,7 @@ fn test_config(worker_id: &str) -> WorkerConfig {
         ai_review_max_attempts: 3,
         collection_page_delay: Duration::ZERO,
         database_url: None,
+        linkedin_availability_cooldown: Duration::ZERO,
         linkedin_description_cooldown: Duration::ZERO,
         dummy_duration: Duration::from_millis(100),
         heartbeat_interval: Duration::from_millis(25),

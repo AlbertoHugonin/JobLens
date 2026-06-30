@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
+use time::OffsetDateTime;
 use tokio::sync::watch;
 
 use crate::{
@@ -79,7 +80,16 @@ pub(crate) async fn run_availability_activity(
         .context("cannot build LinkedIn availability HTTP client")?;
     let result = match read_fixture_availability(&activity.payload) {
         Some(result) => result,
-        None => fetch_linkedin_availability(pool, &client, &target).await?,
+        None => {
+            let fetched = fetch_linkedin_availability(pool, &client, &target).await;
+            if !config.linkedin_availability_cooldown.is_zero() {
+                // Best-effort: a hiccup writing the throttle must not fail a good check.
+                let _ =
+                    set_linkedin_availability_cooldown(pool, config.linkedin_availability_cooldown)
+                        .await;
+            }
+            fetched?
+        }
     };
     update_job_availability_if_outside(pool, &target.job_id, &activity.id, &result).await?;
     update_linkedin_availability_activity(
@@ -225,6 +235,32 @@ async fn fetch_linkedin_availability(
         }),
         _ => Err(anyhow!("LinkedIn availability failed with HTTP {status}")),
     }
+}
+
+async fn set_linkedin_availability_cooldown(pool: &PgPool, cooldown: Duration) -> Result<()> {
+    let cooldown_seconds = cooldown.as_secs() as i64 + i64::from(cooldown.subsec_nanos() > 0);
+    let until = OffsetDateTime::now_utc().unix_timestamp() + cooldown_seconds;
+
+    sqlx::query(
+        r#"
+        INSERT INTO settings(key, value, description)
+        VALUES (
+          'linkedin.availability_cooldown_until',
+          to_jsonb($1::bigint),
+          'Epoch seconds until which live LinkedIn availability claiming is paused'
+        )
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value,
+            description = EXCLUDED.description,
+            updated_at = now()
+        "#,
+    )
+    .bind(until)
+    .execute(pool)
+    .await
+    .context("set LinkedIn availability cooldown failed")?;
+
+    Ok(())
 }
 
 async fn update_job_availability_if_outside(

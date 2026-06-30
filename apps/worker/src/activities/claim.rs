@@ -52,6 +52,17 @@ pub(crate) async fn claim_next_activity(
                 )
               )
             )
+            -- Availability checks may interleave with anything else; the cooldown
+            -- only spaces consecutive checks so they don't fire back to back.
+            AND (
+              activity_type <> 'linkedin_availability'
+              OR $5::boolean = true
+              OR COALESCE((
+                SELECT (value #>> '{}')::bigint
+                FROM settings
+                WHERE key = 'linkedin.availability_cooldown_until'
+              ), 0) <= extract(epoch FROM now())::bigint
+            )
           ORDER BY queued_at ASC, created_at ASC, id ASC
           FOR UPDATE SKIP LOCKED
           LIMIT 1
@@ -76,6 +87,7 @@ pub(crate) async fn claim_next_activity(
     .bind(lease_seconds)
     .bind(ai_paused)
     .bind(config.linkedin_description_cooldown.is_zero())
+    .bind(config.linkedin_availability_cooldown.is_zero())
     .fetch_optional(pool)
     .await
     .context("claim activity query failed")?;

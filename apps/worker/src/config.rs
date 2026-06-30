@@ -8,6 +8,7 @@ pub struct WorkerConfig {
     pub(crate) ai_review_max_attempts: u32,
     pub(crate) collection_page_delay: Duration,
     pub(crate) database_url: Option<String>,
+    pub(crate) linkedin_availability_cooldown: Duration,
     pub(crate) linkedin_description_cooldown: Duration,
     pub(crate) dummy_duration: Duration,
     pub(crate) heartbeat_interval: Duration,
@@ -43,6 +44,13 @@ pub fn read_config() -> WorkerConfig {
         // API; set WORKER_LINKEDIN_PAGE_DELAY_MS=0 to disable.
         collection_page_delay: read_duration_ms("WORKER_LINKEDIN_PAGE_DELAY_MS", 1_200),
         database_url,
+        // Cooldown between live LinkedIn availability checks. They may still
+        // interleave with other work; this only spaces consecutive checks so
+        // they don't fire back to back.
+        linkedin_availability_cooldown: read_duration_ms(
+            "WORKER_LINKEDIN_AVAILABILITY_COOLDOWN_MS",
+            5_000,
+        ),
         // LinkedIn job-description pages are fetched one at a time; this is the
         // cooldown before another live description fetch can be claimed.
         linkedin_description_cooldown: read_duration_ms(
