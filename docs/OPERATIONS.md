@@ -18,6 +18,7 @@ full list with defaults). Copy it to `.env` and adjust as needed.
 | `API_PORT`, `API_CORS_ORIGIN`, `API_RUN_MIGRATIONS` | API port, allowed CORS origin, and whether migrations run on startup. |
 | `FRONTEND_PORT`, `VITE_API_BASE_URL` | Frontend host port and the API URL baked into the build. |
 | `WORKER_PORT`, `WORKER_RUN_LOOP`, `WORKER_POLL_MS`, `WORKER_HEARTBEAT_MS`, `WORKER_LEASE_SECONDS` | Worker port and loop tuning. |
+| `WORKER_LINKEDIN_PAGE_DELAY_MS`, `WORKER_LINKEDIN_DESCRIPTION_COOLDOWN_MS` | LinkedIn pacing: delay between collection pages (default `1200` ms) and cooldown between live job-description fetches (default `5000` ms). Description fetches are claimed one at a time. |
 | `WORKER_AI_COOLDOWN_SECONDS`, `WORKER_AI_MAX_REVIEW_ATTEMPTS` | AI review backoff: how long ai_review claiming pauses after an endpoint failure (default `60`), and how many attempts a non-connectivity failure gets before it is marked failed with a diagnostic review (default `3`). An unreachable endpoint is retried indefinitely until it returns. |
 | `RUST_LOG` | Worker log level. |
 | `AI_ENDPOINT_URL` | Legacy/no-op in the current app; leave it empty. AI endpoints are configured from the UI and stored in PostgreSQL. |

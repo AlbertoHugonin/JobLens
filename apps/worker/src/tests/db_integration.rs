@@ -385,6 +385,7 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
     assert_eq!(first_scheduled_count, 1);
     assert_eq!(second_scheduled_count, 0);
     assert_scheduled_collection_count(pool, &scheduled_search_id, 1).await?;
+    complete_scheduled_collection(pool, &scheduled_search_id).await?;
 
     let concurrent_id = insert_test_activity(pool, "dummy", "queued").await?;
     let config_a = test_config("m3-worker-concurrent-a");
@@ -401,6 +402,69 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
     assert_eq!(claims[0].id, concurrent_id);
     let owner = read_activity_lease_owner(pool, &concurrent_id).await?;
     assert!(owner == "m3-worker-concurrent-a" || owner == "m3-worker-concurrent-b");
+    complete_test_activity(pool, &concurrent_id).await?;
+
+    let description_a_id = insert_test_activity(pool, "linkedin_describe", "queued").await?;
+    let description_b_id = insert_test_activity(pool, "linkedin_describe", "queued").await?;
+    let description_config_a = test_config("m3-worker-description-a");
+    let description_config_b = test_config("m3-worker-description-b");
+    let (description_claim_a, description_claim_b) = tokio::join!(
+        claim_next_activity(pool, &description_config_a),
+        claim_next_activity(pool, &description_config_b)
+    );
+    let description_claims = [description_claim_a?, description_claim_b?]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(description_claims.len(), 1);
+    assert!(
+        description_claims[0].id == description_a_id
+            || description_claims[0].id == description_b_id
+    );
+    assert!(
+        claim_next_activity(pool, &description_config_a)
+            .await?
+            .is_none()
+    );
+    complete_test_activity(pool, &description_claims[0].id).await?;
+    let remaining_description = claim_next_activity(pool, &description_config_a)
+        .await?
+        .context("expected remaining LinkedIn description after first completed")?;
+    assert_eq!(remaining_description.activity_type, "linkedin_describe");
+    complete_test_activity(pool, &remaining_description.id).await?;
+
+    let cooldown_description_id = insert_test_activity(pool, "linkedin_describe", "queued").await?;
+    let cooldown_dummy_id = insert_test_activity(pool, "dummy", "queued").await?;
+    sqlx::query(
+        r#"
+            INSERT INTO settings(key, value, description)
+            VALUES (
+              'linkedin.description_cooldown_until',
+              to_jsonb(extract(epoch FROM now())::bigint + 60),
+              'test description cooldown'
+            )
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            "#,
+    )
+    .execute(pool)
+    .await?;
+    let cooldown_config = WorkerConfig {
+        linkedin_description_cooldown: Duration::from_secs(60),
+        ..test_config("m3-worker-description-cooldown")
+    };
+    let cooldown_claim = claim_next_activity(pool, &cooldown_config)
+        .await?
+        .context("expected non-description activity while description cooldown is active")?;
+    assert_eq!(cooldown_claim.id, cooldown_dummy_id);
+    complete_test_activity(pool, &cooldown_claim.id).await?;
+    sqlx::query("DELETE FROM settings WHERE key = 'linkedin.description_cooldown_until'")
+        .execute(pool)
+        .await?;
+    let cooldown_description = claim_next_activity(pool, &cooldown_config)
+        .await?
+        .context("expected description after cooldown setting is cleared")?;
+    assert_eq!(cooldown_description.id, cooldown_description_id);
+    complete_test_activity(pool, &cooldown_description.id).await?;
 
     let cancel_id = insert_test_activity(pool, "dummy", "queued").await?;
     let cancel_config = WorkerConfig {
@@ -707,6 +771,43 @@ async fn assert_scheduled_collection_count(
     .await?;
     let count: i64 = row.try_get("count")?;
     assert_eq!(count, expected);
+    Ok(())
+}
+
+async fn complete_scheduled_collection(pool: &PgPool, search_id: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+            UPDATE activities
+            SET status = 'success',
+                finished_at = now()
+            WHERE activity_type = 'linkedin_collect'
+              AND source = 'scheduler'
+              AND subject_id = $1::uuid
+              AND status IN ('queued', 'running')
+            "#,
+    )
+    .bind(search_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn complete_test_activity(pool: &PgPool, activity_id: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+            UPDATE activities
+            SET status = 'success',
+                finished_at = now(),
+                lease_owner = NULL,
+                lease_expires_at = NULL
+            WHERE id = $1::uuid
+            "#,
+    )
+    .bind(activity_id)
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 

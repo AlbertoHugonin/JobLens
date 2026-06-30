@@ -13,6 +13,7 @@ import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import {
   createDraftFromQuery,
   createDraftFromSearch,
+  createDuplicateDraftFromSearch,
   createEmptyLinkedInSearchDraft,
   searchScheduleDayOptions,
   type LinkedInSearchDraft,
@@ -40,19 +41,66 @@ function readScheduleNumber(value: string, fallback: number, min: number): numbe
   return Number.isFinite(parsed) ? Math.max(min, Math.trunc(parsed)) : fallback;
 }
 
+export type SearchWizardMode = 'create' | 'duplicate' | 'edit';
+
+function getModalTitle(mode: SearchWizardMode): string {
+  if (mode === 'edit') {
+    return 'Modifica ricerca';
+  }
+
+  if (mode === 'duplicate') {
+    return 'Duplica ricerca';
+  }
+
+  return 'Nuova ricerca';
+}
+
+function getSaveLabel(mode: SearchWizardMode): string {
+  if (mode === 'edit') {
+    return 'Aggiorna';
+  }
+
+  if (mode === 'duplicate') {
+    return 'Crea copia';
+  }
+
+  return 'Salva ricerca';
+}
+
+function createDraftForMode(mode: SearchWizardMode, search: Search | null): LinkedInSearchDraft {
+  if (!search) {
+    return createEmptyLinkedInSearchDraft();
+  }
+
+  return mode === 'duplicate'
+    ? createDuplicateDraftFromSearch(search)
+    : createDraftFromSearch(search);
+}
+
 export function SearchWizardDrawer({
   hasActiveSession,
+  mode,
   onHide,
   search,
   show,
 }: {
   hasActiveSession: boolean;
+  mode: SearchWizardMode;
   onHide: () => void;
   search: Search | null;
   show: boolean;
 }) {
-  const { error, geoError, geoHits, importUrl, preview, previewDraft, saveDraft, searchGeo } =
-    useSearches();
+  const {
+    clearPreview,
+    error,
+    geoError,
+    geoHits,
+    importUrl,
+    preview,
+    previewDraft,
+    saveDraft,
+    searchGeo,
+  } = useSearches();
   const [draft, setDraft] = useState<LinkedInSearchDraft>(createEmptyLinkedInSearchDraft);
   const [importInput, setImportInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -61,14 +109,17 @@ export function SearchWizardDrawer({
   const [showSchedule, setShowSchedule] = useState(false);
   const debouncedLocation = useDebouncedValue(draft.location, 350);
   const previewUrl = preview?.url ?? search?.query.publicUrl ?? '';
+  const modalTitle = getModalTitle(mode);
+  const saveLabel = getSaveLabel(mode);
 
   useEffect(() => {
     if (show) {
-      setDraft(search ? createDraftFromSearch(search) : createEmptyLinkedInSearchDraft());
+      clearPreview();
+      setDraft(createDraftForMode(mode, search));
       setImportInput('');
       setShowSchedule(search?.scheduleConfig.enabled ?? false);
     }
-  }, [search, show]);
+  }, [clearPreview, mode, search, show]);
 
   useEffect(() => {
     if (show) {
@@ -101,7 +152,7 @@ export function SearchWizardDrawer({
 
   const handleSave = async () => {
     setSaving(true);
-    const saved = await saveDraft(draft, search?.id);
+    const saved = await saveDraft(draft, mode === 'edit' ? search?.id : undefined);
     setSaving(false);
     if (saved) {
       onHide();
@@ -136,7 +187,7 @@ export function SearchWizardDrawer({
       size="lg"
     >
       <Modal.Header closeButton>
-        <Modal.Title>{search ? 'Modifica ricerca' : 'Nuova ricerca'}</Modal.Title>
+        <Modal.Title>{modalTitle}</Modal.Title>
       </Modal.Header>
       <Modal.Body>
         <Stack className="gap-4">
@@ -364,7 +415,7 @@ export function SearchWizardDrawer({
           variant="primary"
         >
           {saving ? <Spinner animation="border" className="me-2" size="sm" /> : null}
-          {search ? 'Aggiorna' : 'Salva ricerca'}
+          {saveLabel}
         </Button>
       </Modal.Footer>
     </Modal>

@@ -87,6 +87,39 @@ describe('LinkedIn minimal session', () => {
     expect(envelope.fingerprint.decorationId).toBe('deco-1');
   });
 
+  it('imports user-agent from another LinkedIn HAR request when the session request lacks it', () => {
+    const har = {
+      log: {
+        entries: [
+          {
+            request: {
+              method: 'GET',
+              url: 'https://www.linkedin.com/feed/',
+              headers: [{ name: 'User-Agent', value: 'FallbackHarUA/3.0' }],
+            },
+          },
+          {
+            request: {
+              method: 'GET',
+              url: 'https://www.linkedin.com/voyager/api/voyagerJobsDashJobCards?count=7&decorationId=deco-1&q=jobSearch&query=(x)&start=0',
+              headers: [
+                {
+                  name: 'cookie',
+                  value: 'bcookie=x; li_at=AQEDfromhar; JSESSIONID="ajax:777"; lidc=z',
+                },
+                { name: 'csrf-token', value: 'ajax:777' },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    const envelope = buildLinkedInSessionFromHar(har);
+
+    expect(envelope.fingerprint.userAgent).toBe('FallbackHarUA/3.0');
+    expect(envelope.fingerprint.decorationId).toBe('deco-1');
+  });
+
   it('rejects a HAR without a li_at cookie', () => {
     const har = {
       log: {

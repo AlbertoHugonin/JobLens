@@ -21,12 +21,7 @@ import {
   updateSearch as updateSearchRequest,
 } from '../API/searches';
 import type { Activity } from '../models/activity';
-import type {
-  LinkedInGeoHit,
-  LinkedInSearchDraft,
-  Search,
-  SearchPreview,
-} from '../models/search';
+import type { LinkedInGeoHit, LinkedInSearchDraft, Search, SearchPreview } from '../models/search';
 import { normalizeActivity } from '../services/activityService';
 import {
   draftToLinkedInQueryInput,
@@ -38,6 +33,7 @@ import {
 } from '../services/searchService';
 
 interface SearchesContextValue {
+  clearPreview: () => void;
   deleteSearch: (id: string) => Promise<void>;
   error: string | null;
   geoError: string | null;
@@ -230,6 +226,7 @@ export function SearchesProvider({ children }: { children: ReactNode }) {
     };
 
     try {
+      const creating = !id;
       const response = id
         ? await updateSearchRequest(id, input)
         : await createSearchRequest({
@@ -239,6 +236,9 @@ export function SearchesProvider({ children }: { children: ReactNode }) {
       const search = normalizeSearch(response.data);
 
       setSearches((items) => replaceSearch(items, search));
+      if (creating) {
+        setTotal((value) => value + 1);
+      }
       selectionInitializedRef.current = true;
       setSelectedId(search.id);
       setPreview({ query: search.query, url: search.query.publicUrl });
@@ -311,9 +311,13 @@ export function SearchesProvider({ children }: { children: ReactNode }) {
     setRuns([]);
     setRunNotice(null);
   }, []);
+  const clearPreview = useCallback(() => {
+    setPreview(null);
+  }, []);
 
   const value = useMemo(
     () => ({
+      clearPreview,
       deleteSearch,
       error,
       geoError,
@@ -337,6 +341,7 @@ export function SearchesProvider({ children }: { children: ReactNode }) {
       total,
     }),
     [
+      clearPreview,
       deleteSearch,
       error,
       geoError,

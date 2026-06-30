@@ -1131,7 +1131,7 @@ describe('database migrations', () => {
       data: {
         baseUrl: 'http://127.0.0.1:11434',
         enabled: true,
-        isActive: false,
+        isActive: true,
         name: endpointName,
       },
     });

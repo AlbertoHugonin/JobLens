@@ -27,6 +27,31 @@ pub(crate) async fn claim_next_activity(
               OR (status = 'running' AND lease_expires_at < now())
             )
             AND ($3::boolean = false OR activity_type <> 'ai_review')
+            AND (
+              activity_type <> 'linkedin_describe'
+              OR (
+                pg_try_advisory_xact_lock(hashtext('joblens'), hashtext('linkedin_describe_claim'))
+                AND (
+                  $4::boolean = true
+                  OR COALESCE((
+                    SELECT (value #>> '{}')::bigint
+                    FROM settings
+                    WHERE key = 'linkedin.description_cooldown_until'
+                  ), 0) <= extract(epoch FROM now())::bigint
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM activities running_description
+                  WHERE running_description.activity_type = 'linkedin_describe'
+                    AND running_description.status = 'running'
+                    AND running_description.cancel_requested_at IS NULL
+                    AND (
+                      running_description.lease_expires_at IS NULL
+                      OR running_description.lease_expires_at >= now()
+                    )
+                )
+              )
+            )
           ORDER BY queued_at ASC, created_at ASC, id ASC
           FOR UPDATE SKIP LOCKED
           LIMIT 1
@@ -50,6 +75,7 @@ pub(crate) async fn claim_next_activity(
     .bind(&config.worker_id)
     .bind(lease_seconds)
     .bind(ai_paused)
+    .bind(config.linkedin_description_cooldown.is_zero())
     .fetch_optional(pool)
     .await
     .context("claim activity query failed")?;

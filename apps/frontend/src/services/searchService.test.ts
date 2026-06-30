@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createDefaultSearchScheduleConfig, createDraftFromSearch } from '../models/search';
+import {
+  createDefaultSearchScheduleConfig,
+  createDraftFromSearch,
+  createDuplicateDraftFromSearch,
+} from '../models/search';
 import {
   draftToLinkedInQueryInput,
   normalizeProviderSession,
@@ -38,6 +42,7 @@ describe('searchService', () => {
       updatedAt: '2026-06-25T00:00:01.000Z',
     });
     const draft = createDraftFromSearch(search);
+    const duplicateDraft = createDuplicateDraftFromSearch(search);
 
     expect(search.name).toBe('React Italy');
     expect(search.query.keywords).toBe('React Developer');
@@ -53,6 +58,10 @@ describe('searchService', () => {
       keywords: 'React Developer',
       location: 'Italy',
       workplaceTypes: ['2'],
+    });
+    expect(duplicateDraft).toMatchObject({
+      ...draft,
+      name: 'Copia di React Italy',
     });
   });
 

@@ -196,6 +196,16 @@ export function createDefaultSearchScheduleConfig(): SearchScheduleConfig {
   };
 }
 
+function cloneSearchScheduleConfig(scheduleConfig: SearchScheduleConfig): SearchScheduleConfig {
+  return {
+    activeDays: [...scheduleConfig.activeDays],
+    enabled: scheduleConfig.enabled,
+    extraDelayMinutes: scheduleConfig.extraDelayMinutes,
+    inactiveWindow: { ...scheduleConfig.inactiveWindow },
+    intervalMinutes: scheduleConfig.intervalMinutes,
+  };
+}
+
 export function createEmptyLinkedInSearchDraft(): LinkedInSearchDraft {
   return {
     distance: '25',
@@ -221,8 +231,16 @@ export function createDraftFromSearch(search: Search): LinkedInSearchDraft {
     keywords: search.query.keywords,
     location: search.query.location,
     name: search.name,
-    scheduleConfig: search.scheduleConfig,
+    scheduleConfig: cloneSearchScheduleConfig(search.scheduleConfig),
     workplaceTypes: [...search.query.workplaceTypes],
+  };
+}
+
+export function createDuplicateDraftFromSearch(search: Search): LinkedInSearchDraft {
+  const draft = createDraftFromSearch(search);
+  return {
+    ...draft,
+    name: `Copia di ${draft.name}`,
   };
 }
 

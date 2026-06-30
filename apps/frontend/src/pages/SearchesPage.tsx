@@ -8,7 +8,10 @@ import Stack from 'react-bootstrap/Stack';
 import { SearchList } from '../components/Searches/SearchList';
 import { SearchRunPanel } from '../components/Searches/SearchRunPanel';
 import { SearchSummaryCard } from '../components/Searches/SearchSummaryCard';
-import { SearchWizardDrawer } from '../components/Searches/SearchWizardDrawer';
+import {
+  SearchWizardDrawer,
+  type SearchWizardMode,
+} from '../components/Searches/SearchWizardDrawer';
 import { EmptyState } from '../components/Utilities/SectionState';
 import { ProvidersProvider, useProviders } from '../contexts/ProvidersContext';
 import { SearchesProvider, useSearches } from '../contexts/SearchesContext';
@@ -35,6 +38,7 @@ function SearchesWorkspace() {
   } = useSearches();
   const { loadSessions, sessions } = useProviders();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState<SearchWizardMode>('create');
   const [editingSearch, setEditingSearch] = useState<Search | null>(null);
 
   // A provider can only be used (and a search can only run) when there is at
@@ -79,10 +83,17 @@ function SearchesWorkspace() {
 
   const openNew = () => {
     setEditingSearch(null);
+    setDrawerMode('create');
     setDrawerOpen(true);
   };
   const openEdit = (search: Search) => {
     setEditingSearch(search);
+    setDrawerMode('edit');
+    setDrawerOpen(true);
+  };
+  const openDuplicate = (search: Search) => {
+    setEditingSearch(search);
+    setDrawerMode('duplicate');
     setDrawerOpen(true);
   };
 
@@ -104,7 +115,11 @@ function SearchesWorkspace() {
         <Col className="detail-scroll-pane" lg={7} xl={8}>
           {selectedSearch ? (
             <div className="search-detail-stack d-grid gap-3">
-              <SearchSummaryCard onEdit={() => openEdit(selectedSearch)} search={selectedSearch} />
+              <SearchSummaryCard
+                onDuplicate={() => openDuplicate(selectedSearch)}
+                onEdit={() => openEdit(selectedSearch)}
+                search={selectedSearch}
+              />
               <SearchRunPanel
                 canRunAll={hasActiveSession && searches.some((search) => search.enabled)}
                 hasActiveSession={hasActiveSession}
@@ -129,6 +144,7 @@ function SearchesWorkspace() {
 
       <SearchWizardDrawer
         hasActiveSession={hasActiveSession}
+        mode={drawerMode}
         onHide={() => setDrawerOpen(false)}
         search={editingSearch}
         show={drawerOpen}

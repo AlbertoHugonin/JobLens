@@ -568,6 +568,24 @@ function buildFingerprintFromHeaders(
   return fingerprint;
 }
 
+function findLinkedInHarHeader(input: unknown, headerName: string): string | null {
+  for (const entry of readHarEntries(input)) {
+    const request = isRecord(entry.request) ? entry.request : null;
+    const url = request ? readUrl(request) : null;
+
+    if (!request || !url || !isLinkedInHost(url)) {
+      continue;
+    }
+
+    const value = readHeaders(request).get(headerName.toLowerCase());
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 /** Reduce a full HAR to the minimal credential envelope. */
 export function buildLinkedInSessionFromHar(input: unknown): ProviderSessionEnvelope {
   for (const candidate of readSessionCandidateRequests(input)) {
@@ -590,9 +608,17 @@ export function buildLinkedInSessionFromHar(input: unknown): ProviderSessionEnve
       throw new LinkedInProviderError('HAR does not contain a JSESSIONID / CSRF token');
     }
 
+    const fingerprint = buildFingerprintFromHeaders(headers, url, source);
+    if (!fingerprint.userAgent) {
+      const userAgent = findLinkedInHarHeader(input, 'user-agent');
+      if (userAgent) {
+        fingerprint.userAgent = userAgent;
+      }
+    }
+
     return {
       debug: debugLinkedInHar(input),
-      fingerprint: buildFingerprintFromHeaders(headers, url, source),
+      fingerprint,
       importedAt: new Date().toISOString(),
       providerKey: LINKEDIN_PROVIDER_KEY,
       secrets: { jsessionid, li_at: liAt },

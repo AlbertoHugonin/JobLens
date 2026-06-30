@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { ExternalLink, Pencil } from 'lucide-react';
+import { Copy, ExternalLink, Pencil } from 'lucide-react';
 import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
 import Stack from 'react-bootstrap/Stack';
@@ -24,7 +24,15 @@ function MetaRow({ children, label }: { children: React.ReactNode; label: string
   );
 }
 
-export function SearchSummaryCard({ onEdit, search }: { onEdit: () => void; search: Search }) {
+export function SearchSummaryCard({
+  onDuplicate,
+  onEdit,
+  search,
+}: {
+  onDuplicate: () => void;
+  onEdit: () => void;
+  search: Search;
+}) {
   const { query } = search;
   const [copied, setCopied] = useState(false);
 
@@ -46,6 +54,15 @@ export function SearchSummaryCard({ onEdit, search }: { onEdit: () => void; sear
           <Badge bg={search.enabled ? 'success' : 'secondary'}>
             {search.enabled ? 'attiva' : 'in pausa'}
           </Badge>
+          <Button
+            className="d-inline-flex align-items-center gap-2"
+            onClick={onDuplicate}
+            size="sm"
+            variant="outline-secondary"
+          >
+            <Copy aria-hidden="true" size={14} />
+            Duplica
+          </Button>
           <Button
             className="d-inline-flex align-items-center gap-2"
             onClick={onEdit}

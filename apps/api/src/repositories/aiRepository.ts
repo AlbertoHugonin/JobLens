@@ -562,16 +562,48 @@ export async function createAiEndpoint(
   pool: DatabasePool,
   input: { baseUrl: string; config?: unknown | undefined; enabled: boolean; name: string },
 ): Promise<AiEndpointRecord> {
-  const result = await pool.query<AiEndpointRow>(
-    `
-      INSERT INTO ai_endpoints(name, base_url, enabled, config)
-      VALUES ($1, $2, $3, $4::jsonb)
-      RETURNING id, name, base_url, enabled, is_active, config, created_at, updated_at
-    `,
-    [input.name, input.baseUrl, input.enabled, JSON.stringify(input.config ?? {})],
-  );
+  const client = await pool.connect();
 
-  return mapEndpoint(result.rows[0]!);
+  try {
+    await client.query('BEGIN');
+    await client.query('LOCK TABLE ai_endpoints IN SHARE ROW EXCLUSIVE MODE');
+    const endpointCount = await client.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM ai_endpoints',
+    );
+    const shouldActivate = input.enabled && endpointCount.rows[0]?.count === '0';
+    const result = await client.query<AiEndpointRow>(
+      `
+        INSERT INTO ai_endpoints(name, base_url, enabled, is_active, config)
+        VALUES ($1, $2, $3, $4, $5::jsonb)
+        RETURNING id, name, base_url, enabled, is_active, config, created_at, updated_at
+      `,
+      [
+        input.name,
+        input.baseUrl,
+        input.enabled,
+        shouldActivate,
+        JSON.stringify(input.config ?? {}),
+      ],
+    );
+    const endpoint = mapEndpoint(result.rows[0]!);
+
+    if (shouldActivate) {
+      await upsertSetting(
+        client,
+        'ai.active_endpoint_id',
+        endpoint.id,
+        'Active AI endpoint id used for future activities.',
+      );
+    }
+
+    await client.query('COMMIT');
+    return endpoint;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateAiEndpoint(

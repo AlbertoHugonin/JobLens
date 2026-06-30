@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row, pool::PoolConnection};
+use time::OffsetDateTime;
 use tokio::sync::watch;
 
 use crate::{
@@ -67,7 +68,10 @@ pub(crate) async fn run_describe_activity(
         .context("cannot build LinkedIn description HTTP client")?;
     let content = match read_fixture_description(&activity.payload) {
         Some(content) => content?,
-        None => fetch_linkedin_description(&client, &target).await?,
+        None => {
+            fetch_linkedin_description_with_cooldown(pool, config, &client, &target, &activity.id)
+                .await?
+        }
     };
     let normalized_text = normalize_description_text(&content.text);
 
@@ -103,6 +107,127 @@ pub(crate) async fn run_describe_activity(
     .await?;
     mark_activity_succeeded(pool, config, &activity.id).await?;
     metrics.activities_succeeded.fetch_add(1, Ordering::Relaxed);
+
+    Ok(())
+}
+
+async fn fetch_linkedin_description_with_cooldown(
+    pool: &PgPool,
+    config: &WorkerConfig,
+    client: &reqwest::Client,
+    target: &LinkedInDescriptionTarget,
+    activity_id: &str,
+) -> Result<DescriptionContent> {
+    let mut lock = acquire_linkedin_description_fetch_lock(pool).await?;
+    let mut fetched_live = false;
+    let result = match heartbeat_activity(
+        pool,
+        config,
+        activity_id,
+        "describing",
+        "Fetching LinkedIn job description",
+        0,
+        1,
+    )
+    .await
+    {
+        Ok(HeartbeatOutcome::Running) => {
+            fetched_live = true;
+            fetch_linkedin_description(client, target).await
+        }
+        Ok(HeartbeatOutcome::CancelRequested) => Err(anyhow!(
+            "activity cancel requested before LinkedIn description fetch"
+        )),
+        Ok(HeartbeatOutcome::LeaseLost) => Err(anyhow!("activity lease was lost")),
+        Err(error) => Err(error),
+    };
+
+    let cooldown_result = if fetched_live && !config.linkedin_description_cooldown.is_zero() {
+        set_linkedin_description_cooldown(pool, config.linkedin_description_cooldown).await
+    } else {
+        Ok(())
+    };
+    let unlock_result = release_linkedin_description_fetch_lock(&mut lock).await;
+
+    if let Err(error) = cooldown_result {
+        let cooldown_error = format!("{error:#}");
+        return match result {
+            Ok(_) => Err(error),
+            Err(fetch_error) => Err(fetch_error.context(format!(
+                "set LinkedIn description cooldown also failed: {cooldown_error}"
+            ))),
+        };
+    }
+
+    if let Err(error) = unlock_result {
+        let unlock_error = format!("{error:#}");
+        return match result {
+            Ok(_) => Err(error),
+            Err(fetch_error) => Err(fetch_error.context(format!(
+                "release LinkedIn description fetch lock also failed: {unlock_error}"
+            ))),
+        };
+    }
+
+    result
+}
+
+async fn acquire_linkedin_description_fetch_lock(
+    pool: &PgPool,
+) -> Result<PoolConnection<Postgres>> {
+    let mut connection = pool
+        .acquire()
+        .await
+        .context("acquire LinkedIn description lock connection failed")?;
+    sqlx::query(
+        "SELECT pg_advisory_lock(hashtext('joblens'), hashtext('linkedin_describe_fetch'))",
+    )
+    .execute(&mut *connection)
+    .await
+    .context("acquire LinkedIn description fetch lock failed")?;
+
+    Ok(connection)
+}
+
+async fn release_linkedin_description_fetch_lock(
+    connection: &mut PoolConnection<Postgres>,
+) -> Result<()> {
+    let released: bool = sqlx::query_scalar(
+        "SELECT pg_advisory_unlock(hashtext('joblens'), hashtext('linkedin_describe_fetch'))",
+    )
+    .fetch_one(&mut **connection)
+    .await
+    .context("release LinkedIn description fetch lock failed")?;
+
+    if !released {
+        return Err(anyhow!("LinkedIn description fetch lock was not held"));
+    }
+
+    Ok(())
+}
+
+async fn set_linkedin_description_cooldown(pool: &PgPool, cooldown: Duration) -> Result<()> {
+    let cooldown_seconds = cooldown.as_secs() as i64 + i64::from(cooldown.subsec_nanos() > 0);
+    let until = OffsetDateTime::now_utc().unix_timestamp() + cooldown_seconds;
+
+    sqlx::query(
+        r#"
+        INSERT INTO settings(key, value, description)
+        VALUES (
+          'linkedin.description_cooldown_until',
+          to_jsonb($1::bigint),
+          'Epoch seconds until which live LinkedIn description claiming is paused'
+        )
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value,
+            description = EXCLUDED.description,
+            updated_at = now()
+        "#,
+    )
+    .bind(until)
+    .execute(pool)
+    .await
+    .context("set LinkedIn description cooldown failed")?;
 
     Ok(())
 }

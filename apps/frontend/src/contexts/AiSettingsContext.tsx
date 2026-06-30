@@ -243,21 +243,32 @@ export function AiSettingsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const createEndpoint = useCallback(async (input: AiEndpointInput) => {
-    setCreatingEndpoint(true);
-    try {
-      const response = await createAiEndpointRequest(input);
-      const endpoint = normalizeAiEndpoint(response.data);
-      setEndpoints((items) => replaceEndpoint(items, endpoint));
-      setEndpointError(null);
-      return endpoint;
-    } catch (caught: unknown) {
-      setEndpointError(readErrorMessage(caught));
-      return null;
-    } finally {
-      setCreatingEndpoint(false);
-    }
-  }, []);
+  const createEndpoint = useCallback(
+    async (input: AiEndpointInput) => {
+      setCreatingEndpoint(true);
+      try {
+        const response = await createAiEndpointRequest(input);
+        const endpoint = normalizeAiEndpoint(response.data);
+        setEndpoints((items) =>
+          replaceEndpoint(
+            endpoint.isActive ? items.map((item) => ({ ...item, isActive: false })) : items,
+            endpoint,
+          ),
+        );
+        if (endpoint.isActive) {
+          await Promise.all([loadSettings(), loadModels({ endpointId: endpoint.id, sync: true })]);
+        }
+        setEndpointError(null);
+        return endpoint;
+      } catch (caught: unknown) {
+        setEndpointError(readErrorMessage(caught));
+        return null;
+      } finally {
+        setCreatingEndpoint(false);
+      }
+    },
+    [loadModels, loadSettings],
+  );
 
   const updateEndpoint = useCallback(async (id: string, input: AiEndpointUpdateInput) => {
     setMutatingEndpointId(id);
