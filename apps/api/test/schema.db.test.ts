@@ -1458,6 +1458,142 @@ describe('database migrations', () => {
     });
   }, 30_000);
 
+  it('queues AI reviews for every job matching the active filter', async () => {
+    await runMigrations(pool);
+    const endpoint = await pool.query<{ id: string }>(
+      `
+        INSERT INTO ai_endpoints(name, base_url, enabled, is_active, config)
+        VALUES ('M13 endpoint', 'http://127.0.0.1:11434', true, true, '{}'::jsonb)
+        RETURNING id
+      `,
+    );
+    const endpointId = endpoint.rows[0]?.id;
+    expect(endpointId).toBeTruthy();
+    const provider = await pool.query<{ id: string }>(
+      "SELECT id FROM providers WHERE provider_key = 'linkedin'",
+    );
+    const providerId = provider.rows[0]?.id;
+    const search = await pool.query<{ id: string }>(
+      `
+        INSERT INTO searches(provider_id, name, query, enabled)
+        VALUES ($1, 'M13 bulk search', '{"providerKey":"linkedin"}'::jsonb, true)
+        RETURNING id
+      `,
+      [providerId],
+    );
+    const searchId = search.rows[0]?.id;
+    expect(searchId).toBeTruthy();
+    const jobs = await pool.query<{ id: string }>(
+      `
+        WITH inserted_jobs AS (
+          INSERT INTO jobs(title, company_name, location_text, published_at, availability_status)
+          SELECT
+            'M13 Bulk Engineer ' || item,
+            'Bulk Co',
+            'Remote',
+            now(),
+            'active'
+          FROM generate_series(1, 30) AS item
+          RETURNING id
+        ),
+        presence AS (
+          INSERT INTO job_search_presence(job_id, search_id)
+          SELECT id, $1::uuid
+          FROM inserted_jobs
+        )
+        SELECT id::text AS id
+        FROM inserted_jobs
+      `,
+      [searchId],
+    );
+    const jobIds = jobs.rows.map((job) => job.id);
+    expect(jobIds).toHaveLength(30);
+    await pool.query(
+      `
+        INSERT INTO settings(key, value, description)
+        VALUES
+          ('ai.enabled', 'true'::jsonb, 'AI enabled'),
+          ('ai.active_endpoint_id', to_jsonb($1::text), 'Active endpoint'),
+          ('ai.runtime', $2::jsonb, 'AI runtime')
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value,
+            description = EXCLUDED.description,
+            updated_at = now()
+      `,
+      [
+        endpointId,
+        JSON.stringify({
+          modelName: 'm13-filter-model',
+          priorityModelName: 'm13-filter-model',
+        }),
+      ],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_reviews(
+          job_id,
+          endpoint_id,
+          model_name,
+          profile_hash,
+          rules_hash,
+          status,
+          decision,
+          score,
+          result,
+          metrics
+        )
+        VALUES ($1, $2, 'm13-filter-model', 'profile', 'rules', 'success', 'maybe', 70, '{}'::jsonb, '{"mode":"automatic"}'::jsonb)
+      `,
+      [jobIds[0], endpointId],
+    );
+
+    const app = await buildApp(readConfig({ NODE_ENV: 'test', API_RUN_MIGRATIONS: 'false' }), {
+      db: pool,
+    });
+    const filteredBatch = await app.inject({
+      method: 'POST',
+      payload: {
+        filters: {
+          scope: 'standard',
+          text: 'M13 Bulk',
+        },
+        mode: 'automatic',
+      },
+      url: '/api/v1/jobs/batch-reviews',
+    });
+    const activityIds = (filteredBatch.json().data?.queued ?? []).map(
+      (activity: { id: string }) => activity.id,
+    );
+
+    await app.close();
+    await pool.query('DELETE FROM activity_logs WHERE activity_id = ANY($1::uuid[])', [
+      activityIds,
+    ]);
+    await pool.query('DELETE FROM activities WHERE id = ANY($1::uuid[])', [activityIds]);
+    await pool.query('DELETE FROM jobs WHERE id = ANY($1::uuid[])', [jobIds]);
+    await pool.query('DELETE FROM searches WHERE id = $1', [searchId]);
+    await pool.query('DELETE FROM ai_models WHERE endpoint_id = $1', [endpointId]);
+    await pool.query('DELETE FROM ai_endpoints WHERE id = $1', [endpointId]);
+    await pool.query("UPDATE settings SET value = 'false'::jsonb WHERE key = 'ai.enabled'");
+    await pool.query(
+      "UPDATE settings SET value = 'null'::jsonb WHERE key = 'ai.active_endpoint_id'",
+    );
+    await pool.query("DELETE FROM settings WHERE key = 'ai.runtime'");
+
+    expect(filteredBatch.statusCode).toBe(202);
+    expect(filteredBatch.json().data.queued).toHaveLength(29);
+    expect(filteredBatch.json().data.skipped).toEqual([
+      { jobId: jobIds[0], reason: 'already_reviewed_with_automatic_model' },
+    ]);
+    expect(
+      new Set(
+        filteredBatch
+          .json()
+          .data.queued.map((activity: { subjectId: string }) => activity.subjectId),
+      ).size,
+    ).toBe(29);
+  }, 30_000);
+
   it('queues debug/export activities, benchmarks models, and deletes reviews by model', async () => {
     await runMigrations(pool);
     const endpoint = await pool.query<{ id: string }>(

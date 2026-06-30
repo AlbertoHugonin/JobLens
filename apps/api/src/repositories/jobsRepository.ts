@@ -574,6 +574,44 @@ export async function listJobs(pool: DatabasePool, filters: JobFilters): Promise
   };
 }
 
+export async function listJobIds(pool: DatabasePool, filters: JobFilters): Promise<string[]> {
+  const { conditions, params } = buildJobConditions(filters);
+  const whereClause = buildWhereClause(conditions);
+  const result = await pool.query<{ id: string }>(
+    `
+      SELECT jobs.id::text AS id
+      FROM jobs
+      LEFT JOIN LATERAL (
+        SELECT NULLIF(value->>'priorityModelName', '') AS priority_model_name
+        FROM settings
+        WHERE key = 'ai.runtime'
+        LIMIT 1
+      ) ai_runtime ON true
+      LEFT JOIN LATERAL (
+        SELECT job_reviews.decision, job_reviews.model_name
+        FROM job_reviews
+        WHERE job_reviews.job_id = jobs.id
+        ORDER BY
+          CASE
+            WHEN job_reviews.status = 'success'
+              AND ai_runtime.priority_model_name IS NOT NULL
+              AND job_reviews.model_name = ai_runtime.priority_model_name THEN 0
+            WHEN job_reviews.status = 'success' THEN 1
+            ELSE 2
+          END,
+          job_reviews.created_at DESC,
+          job_reviews.id DESC
+        LIMIT 1
+      ) latest_review ON true
+      ${whereClause}
+      ORDER BY jobs.created_at DESC, jobs.id DESC
+    `,
+    params,
+  );
+
+  return result.rows.map((row) => row.id);
+}
+
 export async function readJobInsights(
   pool: DatabasePool,
   input: { topLimit: number },

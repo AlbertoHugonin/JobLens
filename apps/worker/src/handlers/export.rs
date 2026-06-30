@@ -272,8 +272,11 @@ async fn build_debug_bundle(pool: &PgPool) -> Result<ExportArtifact> {
     let counts = read_debug_counts(pool).await?;
     let recent_activities = read_recent_activities(pool).await?;
     let recent_errors = read_recent_errors(pool).await?;
+    let activity_queues = read_debug_activity_queues(pool).await?;
+    let linkedin = read_debug_linkedin(pool).await?;
     let model_metrics = read_debug_model_metrics(pool).await?;
     let bundle = json!({
+        "activityQueues": activity_queues,
         "ai": {
             "endpoints": endpoints,
             "modelMetrics": model_metrics,
@@ -281,6 +284,7 @@ async fn build_debug_bundle(pool: &PgPool) -> Result<ExportArtifact> {
         },
         "counts": counts,
         "generatedAt": utc_timestamp(),
+        "linkedin": linkedin,
         "queue": queue,
         "recentActivities": recent_activities,
         "recentErrors": recent_errors,
@@ -542,6 +546,302 @@ async fn read_debug_model_metrics(pool: &PgPool) -> Result<Value> {
 
     row.try_get("items")
         .context("read debug model metrics JSON failed")
+}
+
+async fn read_debug_activity_queues(pool: &PgPool) -> Result<Value> {
+    let row = sqlx::query(
+        r#"
+        SELECT COALESCE(jsonb_object_agg(activity_type, status_counts), '{}'::jsonb) AS queues
+        FROM (
+          SELECT
+            activity_type,
+            jsonb_object_agg(status, count ORDER BY status) AS status_counts
+          FROM (
+            SELECT activity_type, status, COUNT(*) AS count
+            FROM activities
+            WHERE activity_type IN (
+              'ai_review',
+              'linkedin_availability',
+              'linkedin_collect',
+              'linkedin_describe'
+            )
+            GROUP BY activity_type, status
+          ) counts
+          GROUP BY activity_type
+        ) grouped
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .context("read debug activity queues failed")?;
+
+    row.try_get("queues")
+        .context("read debug activity queues JSON failed")
+}
+
+async fn read_debug_linkedin(pool: &PgPool) -> Result<Value> {
+    let recent_activities = read_debug_linkedin_activities(pool).await?;
+    let raw_payloads = read_debug_linkedin_raw_payloads(pool).await?;
+
+    Ok(json!({
+        "activities": recent_activities,
+        "rawPayloads": raw_payloads,
+    }))
+}
+
+async fn read_debug_linkedin_activities(pool: &PgPool) -> Result<Value> {
+    let row = sqlx::query(
+        r#"
+        SELECT COALESCE(jsonb_agg(
+          jsonb_build_object(
+            'activityType', activity_type,
+            'createdAt', created_at,
+            'error', error,
+            'id', id,
+            'latestHttpStatus', latest_http_status,
+            'message', message,
+            'phase', phase,
+            'rawFailed', raw_failed,
+            'rawTotal', raw_total,
+            'source', source,
+            'status', status,
+            'subjectId', subject_id,
+            'subjectType', subject_type,
+            'updatedAt', updated_at
+          )
+        ), '[]'::jsonb) AS items
+        FROM (
+          SELECT
+            activities.*,
+            (
+              SELECT COUNT(*)
+              FROM raw_payloads
+              JOIN providers ON providers.id = raw_payloads.provider_id
+              WHERE raw_payloads.activity_id = activities.id
+                AND providers.provider_key = 'linkedin'
+            ) AS raw_total,
+            (
+              SELECT COUNT(*)
+              FROM raw_payloads
+              JOIN providers ON providers.id = raw_payloads.provider_id
+              WHERE raw_payloads.activity_id = activities.id
+                AND providers.provider_key = 'linkedin'
+                AND raw_payloads.response_status >= 400
+            ) AS raw_failed,
+            (
+              SELECT raw_payloads.response_status
+              FROM raw_payloads
+              JOIN providers ON providers.id = raw_payloads.provider_id
+              WHERE raw_payloads.activity_id = activities.id
+                AND providers.provider_key = 'linkedin'
+              ORDER BY raw_payloads.created_at DESC, raw_payloads.id DESC
+              LIMIT 1
+            ) AS latest_http_status
+          FROM activities
+          WHERE activity_type LIKE 'linkedin_%'
+            OR payload->>'providerKey' = 'linkedin'
+            OR EXISTS (
+              SELECT 1
+              FROM raw_payloads
+              JOIN providers ON providers.id = raw_payloads.provider_id
+              WHERE raw_payloads.activity_id = activities.id
+                AND providers.provider_key = 'linkedin'
+            )
+          ORDER BY activities.updated_at DESC, activities.id DESC
+          LIMIT 25
+        ) recent
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .context("read debug LinkedIn activities failed")?;
+
+    row.try_get("items")
+        .context("read debug LinkedIn activities JSON failed")
+}
+
+async fn read_debug_linkedin_raw_payloads(pool: &PgPool) -> Result<Value> {
+    let (summary_result, status_result, recent_result) = tokio::try_join!(
+        sqlx::query(
+            r#"
+            SELECT
+              COUNT(*)::bigint AS total,
+              COUNT(*) FILTER (WHERE response_status >= 400)::bigint AS failed
+            FROM raw_payloads
+            JOIN providers ON providers.id = raw_payloads.provider_id
+            WHERE providers.provider_key = 'linkedin'
+            "#
+        )
+        .fetch_one(pool),
+        sqlx::query(
+            r#"
+            SELECT COALESCE(jsonb_agg(
+              jsonb_build_object('count', count, 'status', status)
+              ORDER BY status
+            ), '[]'::jsonb) AS items
+            FROM (
+              SELECT COALESCE(response_status::text, 'unknown') AS status, COUNT(*) AS count
+              FROM raw_payloads
+              JOIN providers ON providers.id = raw_payloads.provider_id
+              WHERE providers.provider_key = 'linkedin'
+              GROUP BY COALESCE(response_status::text, 'unknown')
+            ) status_counts
+            "#
+        )
+        .fetch_one(pool),
+        sqlx::query(
+            r#"
+            SELECT
+              raw_payloads.id::text AS id,
+              raw_payloads.activity_id::text AS activity_id,
+              raw_payloads.request_url,
+              raw_payloads.request_params,
+              raw_payloads.response_status,
+              raw_payloads.content_type,
+              raw_payloads.elapsed_ms,
+              raw_payloads.payload,
+              raw_payloads.payload_text,
+              raw_payloads.created_at::text AS created_at
+            FROM raw_payloads
+            JOIN providers ON providers.id = raw_payloads.provider_id
+            WHERE providers.provider_key = 'linkedin'
+            ORDER BY raw_payloads.created_at DESC, raw_payloads.id DESC
+            LIMIT 20
+            "#
+        )
+        .fetch_all(pool)
+    )
+    .context("read debug LinkedIn raw payloads failed")?;
+
+    let total: i64 = summary_result.try_get("total")?;
+    let failed: i64 = summary_result.try_get("failed")?;
+    let status_counts: Value = status_result.try_get("items")?;
+    let mut recent = Vec::with_capacity(recent_result.len());
+
+    for row in recent_result {
+        let payload: Option<Value> = row.try_get("payload")?;
+        let payload_text: Option<String> = row.try_get("payload_text")?;
+        recent.push(json!({
+            "activityId": row.try_get::<Option<String>, _>("activity_id")?,
+            "contentType": row.try_get::<Option<String>, _>("content_type")?,
+            "createdAt": row.try_get::<String, _>("created_at")?,
+            "elapsedMs": row.try_get::<Option<i32>, _>("elapsed_ms")?,
+            "id": row.try_get::<String, _>("id")?,
+            "payloadKind": if payload.is_some() { "json" } else if payload_text.is_some() { "text" } else { "empty" },
+            "requestParams": sanitize_debug_value(row.try_get::<Value, _>("request_params")?, 0),
+            "requestUrl": row
+                .try_get::<Option<String>, _>("request_url")?
+                .map(|value| redact_debug_text(&value)),
+            "responseStatus": row.try_get::<Option<i32>, _>("response_status")?,
+            "snippet": debug_payload_snippet(payload.as_ref(), payload_text.as_deref()),
+        }));
+    }
+
+    Ok(json!({
+        "failed": failed,
+        "recent": recent,
+        "statusCounts": status_counts,
+        "total": total,
+    }))
+}
+
+fn sanitize_debug_value(value: Value, depth: usize) -> Value {
+    if depth > 6 {
+        return Value::String("[truncated]".to_string());
+    }
+
+    match value {
+        Value::String(text) => Value::String(truncate_debug_text(&redact_debug_text(&text), 1000)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .take(50)
+                .map(|item| sanitize_debug_value(item, depth + 1))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, item)| {
+                    let sanitized = if is_secret_debug_key(&key) {
+                        Value::String("[redacted]".to_string())
+                    } else {
+                        sanitize_debug_value(item, depth + 1)
+                    };
+                    (key, sanitized)
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn debug_payload_snippet(payload: Option<&Value>, payload_text: Option<&str>) -> Option<String> {
+    let snippet = match (payload, payload_text) {
+        (Some(payload), _) => serde_json::to_string(payload).ok()?,
+        (None, Some(text)) => text.to_string(),
+        (None, None) => return None,
+    };
+
+    Some(truncate_debug_text(&redact_debug_text(&snippet), 4000))
+}
+
+fn is_secret_debug_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    [
+        "authorization",
+        "cookie",
+        "csrf",
+        "jsessionid",
+        "li_at",
+        "password",
+        "secret",
+        "token",
+        "x-li-track",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn redact_debug_text(value: &str) -> String {
+    let mut output = value.to_string();
+    for prefix in ["li_at=", "JSESSIONID=", "csrf-token=", "authorization="] {
+        output = redact_after_prefix(&output, prefix);
+    }
+    output
+}
+
+fn redact_after_prefix(value: &str, prefix: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    let prefix_lower = prefix.to_ascii_lowercase();
+    let mut output = String::with_capacity(value.len());
+    let mut index = 0;
+
+    while let Some(relative) = lower[index..].find(&prefix_lower) {
+        let start = index + relative;
+        let value_start = start + prefix.len();
+        output.push_str(&value[index..value_start]);
+        output.push_str("[redacted]");
+        let end = value[value_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                matches!(character, ';' | '&' | '"' | '\'' | ' ' | '\n' | '\r' | '\t')
+                    .then_some(value_start + offset)
+            })
+            .unwrap_or(value.len());
+        index = end;
+    }
+
+    output.push_str(&value[index..]);
+    output
+}
+
+fn truncate_debug_text(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+
+    let truncated: String = value.chars().take(limit).collect();
+    format!("{truncated}... [truncated]")
 }
 
 fn sanitize_url_origin(value: &str) -> Option<String> {

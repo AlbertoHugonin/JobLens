@@ -10,6 +10,7 @@ use crate::{
         ClaimedActivity, HeartbeatOutcome, insert_activity_log, mark_activity_cancelled,
         mark_activity_interrupted, mark_activity_succeeded,
     },
+    ai::enqueue::enqueue_automatic_reviews_for_search_ready_jobs,
     config::WorkerConfig,
     telemetry::WorkerMetrics,
     util::{duration_as_i64_seconds, read_json_i32, read_json_string},
@@ -165,6 +166,9 @@ pub(crate) async fn run_collect_activity(
         .is_some_and(|total_results| stats.jobs_seen >= total_results);
     stats.descriptions_queued =
         enqueue_missing_linkedin_descriptions(pool, &search.search_id, &activity.id).await?;
+    stats.ai_reviews_queued =
+        enqueue_automatic_reviews_for_search_ready_jobs(pool, &search.search_id, &activity.id)
+            .await?;
     if complete_collection {
         let availability_outcome = mark_missing_linkedin_jobs_and_enqueue_availability(
             pool,
@@ -455,6 +459,7 @@ async fn mark_search_run_attempted(pool: &PgPool, search_id: &str) -> Result<()>
 
 fn linkedin_stats_json(stats: &LinkedInCollectStats) -> Value {
     json!({
+        "aiReviewsQueued": stats.ai_reviews_queued,
         "availabilityQueued": stats.availability_queued,
         "descriptionsQueued": stats.descriptions_queued,
         "jobsCreated": stats.jobs_created,

@@ -12,6 +12,7 @@ use crate::{
         ClaimedActivity, HeartbeatOutcome, heartbeat_activity, insert_activity_log,
         mark_activity_cancelled, mark_activity_interrupted, mark_activity_succeeded,
     },
+    ai::enqueue::{AutomaticReviewQueueOutcome, enqueue_automatic_review_for_job},
     config::WorkerConfig,
     telemetry::WorkerMetrics,
     util::{duration_as_i64_seconds, read_json_i32, read_json_string},
@@ -105,6 +106,23 @@ pub(crate) async fn run_describe_activity(
         }),
     )
     .await?;
+
+    if let AutomaticReviewQueueOutcome::Queued(review_activity_id) =
+        enqueue_automatic_review_for_job(pool, &target.job_id, &activity.id).await?
+    {
+        insert_activity_log(
+            pool,
+            &activity.id,
+            "info",
+            "Queued automatic AI review",
+            json!({
+                "jobId": target.job_id,
+                "reviewActivityId": review_activity_id,
+            }),
+        )
+        .await?;
+    }
+
     mark_activity_succeeded(pool, config, &activity.id).await?;
     metrics.activities_succeeded.fetch_add(1, Ordering::Relaxed);
 

@@ -146,7 +146,8 @@ export interface JobReviewInput {
 }
 
 export interface BatchJobReviewsInput extends JobReviewInput {
-  jobIds: string[];
+  filters?: Omit<JobListParams, 'limit' | 'offset'> | undefined;
+  jobIds?: string[] | undefined;
 }
 
 export interface SkippedJobReviewDto {

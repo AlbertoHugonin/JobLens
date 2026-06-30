@@ -639,6 +639,36 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
     assert_activity_status(pool, &debug_export_id, "success").await?;
     assert_export_artifact(pool, &debug_export_id, "debug_bundle").await?;
 
+    let automatic_model_name = configure_automatic_ai_review(pool).await?;
+    let auto_description_id = insert_linkedin_description_fixture_activity(
+        pool,
+        &collect_fixture.provider_id,
+        "m7-2",
+        "Backend role description with automatic AI review",
+    )
+    .await?;
+    let auto_description = claim_next_activity(pool, &config)
+        .await?
+        .context("expected automatic review description activity")?;
+    assert_eq!(auto_description.id, auto_description_id);
+    let mut auto_description_shutdown = shutdown_rx.clone();
+    process_activity(
+        pool,
+        &config,
+        &metrics,
+        auto_description,
+        &mut auto_description_shutdown,
+    )
+    .await?;
+    assert_activity_status(pool, &auto_description_id, "success").await?;
+    assert_automatic_ai_review_queued(
+        pool,
+        &collect_fixture.provider_id,
+        "m7-2",
+        &automatic_model_name,
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -988,6 +1018,46 @@ async fn insert_export_fixture(pool: &PgPool, kind: &str) -> Result<String> {
     .await?;
 
     activity.try_get("id").context("read export activity id")
+}
+
+async fn configure_automatic_ai_review(pool: &PgPool) -> Result<String> {
+    let suffix = Uuid::new_v4().simple().to_string();
+    let model_name = format!("m13-auto-model-{suffix}");
+    let endpoint = sqlx::query(
+        r#"
+            INSERT INTO ai_endpoints(name, base_url, enabled, is_active, config)
+            VALUES ($1, 'http://localhost:11434', true, true, '{}'::jsonb)
+            RETURNING id::text AS id
+            "#,
+    )
+    .bind(format!("M13 automatic endpoint {suffix}"))
+    .fetch_one(pool)
+    .await?;
+    let endpoint_id: String = endpoint.try_get("id")?;
+
+    sqlx::query(
+        r#"
+            INSERT INTO settings(key, value, description)
+            VALUES
+              ('ai.enabled', 'true'::jsonb, 'test AI enabled'),
+              ('ai.active_endpoint_id', to_jsonb($1::text), 'test active endpoint'),
+              ('ai.runtime', $2::jsonb, 'test runtime')
+            ON CONFLICT (key) DO UPDATE
+            SET value = EXCLUDED.value,
+                description = EXCLUDED.description,
+                updated_at = now()
+            "#,
+    )
+    .bind(&endpoint_id)
+    .bind(json!({
+        "modelName": model_name,
+        "priorityModelName": model_name,
+        "timeoutSeconds": 5
+    }))
+    .execute(pool)
+    .await?;
+
+    Ok(model_name)
 }
 
 async fn process_next_activity_of_type(
@@ -1532,11 +1602,48 @@ async fn assert_export_artifact(
         assert!(content.contains("m11-fixture-model"));
     } else {
         assert!(content.contains("\"counts\""));
+        assert!(content.contains("\"linkedin\""));
         assert!(content.contains("\"queue\""));
+        assert!(content.contains("\"rawPayloads\""));
         assert!(!content.contains("Rust backend candidate"));
         assert!(!content.contains("Prefer Rust, PostgreSQL and remote roles"));
     }
 
+    Ok(())
+}
+
+async fn assert_automatic_ai_review_queued(
+    pool: &PgPool,
+    provider_id: &str,
+    external_id: &str,
+    model_name: &str,
+) -> Result<()> {
+    let job_id = read_job_id_by_external_id(pool, provider_id, external_id).await?;
+    let row = sqlx::query(
+        r#"
+            SELECT payload
+            FROM activities
+            WHERE activity_type = 'ai_review'
+              AND status = 'queued'
+              AND subject_type = 'job'
+              AND subject_id = $1::uuid
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+    )
+    .bind(&job_id)
+    .fetch_one(pool)
+    .await?;
+    let payload: serde_json::Value = row.try_get("payload")?;
+
+    assert_eq!(payload["mode"], "automatic");
+    assert_eq!(payload["modelName"], model_name);
+    assert_eq!(payload["jobId"], job_id);
+    assert!(
+        payload["requestedByActivityId"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
     Ok(())
 }
 

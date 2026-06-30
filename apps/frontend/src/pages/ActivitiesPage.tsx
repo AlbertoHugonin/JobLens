@@ -60,13 +60,15 @@ function ActivitiesWorkspace() {
     }
   }, [summary]);
 
-  // Always keep an activity open: fall back to the first item when nothing valid is selected.
+  // Keep the current detail open during live refreshes. New timeline pages can
+  // arrive while the user is reading an older activity, so only auto-select on
+  // the initial empty state.
   useEffect(() => {
     const first = activities[0];
     if (!first) {
       return;
     }
-    if (!selectedId || !activities.some((activity) => activity.id === selectedId)) {
+    if (!selectedId) {
       void selectActivity(first.id);
     }
   }, [activities, selectedId, selectActivity]);

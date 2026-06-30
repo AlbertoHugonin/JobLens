@@ -69,7 +69,7 @@ function JobsWorkspace() {
     <Stack className="app-page gap-4">
       <PageHeader description="Lista paginata, filtri e dettaglio offerta" title="Offerte" />
       <JobFilterBar
-        batchReviewDisabled={jobs.length === 0}
+        batchReviewDisabled={total === 0}
         batchReviewing={batchReviewing}
         filters={filters}
         loading={loadingJobs}

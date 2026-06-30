@@ -15,6 +15,7 @@ import {
 import {
   exportJob,
   hasSuccessfulAutomaticJobReview,
+  listJobIds,
   listJobs,
   readJobInsights,
   readJob,
@@ -22,6 +23,7 @@ import {
   readExistingJobIds,
   updateJobLocalStatus,
   type JobAvailabilityStatus,
+  type JobFilters,
   type JobLocalStatus,
   type JobReviewDecision,
   type JobScope,
@@ -67,7 +69,8 @@ interface JobReviewRequestBody {
 }
 
 interface BatchJobReviewsBody extends JobReviewRequestBody {
-  jobIds: string[];
+  filters?: JobListQuery | undefined;
+  jobIds?: string[] | undefined;
 }
 
 const jobLocalStatusValues = ['new', 'viewed', 'saved', 'applied'] as const;
@@ -335,11 +338,34 @@ const jobReviewRequestBodySchema = {
   },
 } as const;
 
+const jobFilterBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    availabilityStatus: { type: 'string', enum: jobAvailabilityStatusValues },
+    decision: { type: 'string' },
+    localStatus: { type: 'string', enum: jobLocalStatusValues },
+    location: { type: 'string' },
+    modelName: { type: 'string' },
+    providerKey: { type: 'string', enum: ['linkedin'] },
+    scope: { type: 'string', enum: ['standard', 'all'] },
+    searchId: { type: 'string', format: 'uuid' },
+    sortBy: {
+      type: 'string',
+      enum: ['aiScore', 'publishedAt', 'repostedAt'],
+    },
+    sortDir: { type: 'string', enum: ['asc', 'desc'] },
+    text: { type: 'string' },
+    workplace: { type: 'string', enum: jobWorkplaceModeValues },
+  },
+} as const;
+
 const batchJobReviewsBodySchema = {
   ...jobReviewRequestBodySchema,
-  required: ['jobIds'],
+  anyOf: [{ required: ['jobIds'] }, { required: ['filters'] }],
   properties: {
     ...jobReviewRequestBodySchema.properties,
+    filters: jobFilterBodySchema,
     jobIds: {
       type: 'array',
       minItems: 1,
@@ -392,6 +418,25 @@ function normalizeProviderKey(value: string | undefined): string | undefined {
   }
 
   return normalized;
+}
+
+function normalizeJobFilters(query: JobListQuery = {}): JobFilters {
+  return {
+    availabilityStatus: query.availabilityStatus,
+    decision: parseDecisions(query.decision),
+    limit: query.limit ?? 25,
+    localStatus: query.localStatus,
+    location: normalizeTextFilter(query.location),
+    modelName: normalizeTextFilter(query.modelName),
+    offset: query.offset ?? 0,
+    providerKey: normalizeProviderKey(query.providerKey),
+    scope: query.scope ?? 'standard',
+    searchId: query.searchId,
+    sortBy: query.sortBy ?? 'publishedAt',
+    sortDir: query.sortDir ?? 'desc',
+    text: normalizeTextFilter(query.text),
+    workplace: query.workplace,
+  };
 }
 
 async function resolveJobReviewTarget(
@@ -494,22 +539,7 @@ export async function registerJobsRoutes(
       const pool = requireDatabase(db);
       const limit = request.query.limit ?? 25;
       const offset = request.query.offset ?? 0;
-      const result = await listJobs(pool, {
-        availabilityStatus: request.query.availabilityStatus,
-        decision: parseDecisions(request.query.decision),
-        limit,
-        localStatus: request.query.localStatus,
-        location: normalizeTextFilter(request.query.location),
-        modelName: normalizeTextFilter(request.query.modelName),
-        offset,
-        providerKey: normalizeProviderKey(request.query.providerKey),
-        scope: request.query.scope ?? 'standard',
-        searchId: request.query.searchId,
-        sortBy: request.query.sortBy ?? 'publishedAt',
-        sortDir: request.query.sortDir ?? 'desc',
-        text: normalizeTextFilter(request.query.text),
-        workplace: request.query.workplace,
-      });
+      const result = await listJobs(pool, normalizeJobFilters({ ...request.query, limit, offset }));
 
       return ok(result.items, {
         limit,
@@ -655,11 +685,16 @@ export async function registerJobsRoutes(
       const pool = requireDatabase(db);
       const mode = request.body.mode ?? 'automatic';
       const force = request.body.force === true;
-      const existingIds = await readExistingJobIds(pool, request.body.jobIds);
-      const skipped = request.body.jobIds
+      const requestedIds = request.body.filters
+        ? await listJobIds(pool, normalizeJobFilters(request.body.filters))
+        : (request.body.jobIds ?? []);
+      const existingIds = request.body.filters
+        ? new Set(requestedIds)
+        : await readExistingJobIds(pool, requestedIds);
+      const skipped = requestedIds
         .filter((jobId) => !existingIds.has(jobId))
         .map((jobId) => ({ jobId, reason: 'job_not_found' }));
-      const candidateIds = request.body.jobIds.filter((jobId) => existingIds.has(jobId));
+      const candidateIds = requestedIds.filter((jobId) => existingIds.has(jobId));
 
       if (candidateIds.length === 0) {
         return reply.code(202).send(ok({ queued: [], skipped }));

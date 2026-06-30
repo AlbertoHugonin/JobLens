@@ -230,15 +230,14 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   );
 
   const requestBatchReviews = useCallback(async () => {
-    const jobIds = jobs.map((job) => job.id);
-    if (jobIds.length === 0) {
+    if (total === 0) {
       return;
     }
 
     setBatchReviewing(true);
     try {
       const response = await requestBatchJobReviews({
-        jobIds,
+        filters: toRequestFilters(filters),
         mode: 'automatic',
       });
       const result = normalizeBatchJobReviewResult(response.data);
@@ -252,7 +251,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     } finally {
       setBatchReviewing(false);
     }
-  }, [jobs, loadJobs]);
+  }, [filters, loadJobs, total]);
 
   const value = useMemo<JobsContextValue>(
     () => ({

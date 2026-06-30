@@ -51,6 +51,7 @@ pub(crate) struct JobUpsertOutcome {
 
 #[derive(Debug, Default)]
 pub(crate) struct LinkedInCollectStats {
+    pub(crate) ai_reviews_queued: i32,
     pub(crate) availability_queued: i32,
     pub(crate) descriptions_queued: i32,
     pub(crate) jobs_created: i32,
