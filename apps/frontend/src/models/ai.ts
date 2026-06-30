@@ -15,6 +15,7 @@ export interface AiRuntimeSettings {
 
 export interface AiPauseWindow {
   dayOfWeek: number;
+  daysOfWeek: number[];
   enabled: boolean;
   endTime: string;
   startTime: string;
@@ -143,6 +144,20 @@ export const defaultAiReviewFieldKeys = new Set(defaultAiReviewFields.map((field
 
 export function getAiPauseDayLabel(dayOfWeek: number): string {
   return aiPauseDayOptions.find((option) => option.value === dayOfWeek)?.label ?? String(dayOfWeek);
+}
+
+export function getAiPauseDaysLabel(daysOfWeek: number[]): string {
+  const days = Array.from(new Set(daysOfWeek)).sort((left, right) => left - right);
+
+  if (days.length === 7) {
+    return 'Tutti i giorni';
+  }
+
+  if (days.length === 5 && days.every((day, index) => day === index + 1)) {
+    return 'Lunedi-Venerdi';
+  }
+
+  return days.map(getAiPauseDayLabel).join(', ');
 }
 
 export function getAiEndpointStateLabel(endpoint: AiEndpoint): string {

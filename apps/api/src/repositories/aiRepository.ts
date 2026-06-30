@@ -38,6 +38,7 @@ export interface AiRuntimeSettings {
 
 export interface AiPauseWindow {
   dayOfWeek: number;
+  daysOfWeek: number[];
   enabled: boolean;
   endTime: string;
   startTime: string;
@@ -341,6 +342,39 @@ function normalizeRuntime(value: unknown): AiRuntimeSettings {
   };
 }
 
+function normalizeDayOfWeek(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(6, Math.round(value)));
+}
+
+function normalizePauseDays(item: Record<string, unknown>): number[] {
+  const days = new Set<number>();
+  const addDay = (value: unknown) => {
+    const day = normalizeDayOfWeek(value);
+
+    if (day !== null) {
+      days.add(day);
+    }
+  };
+
+  if (Array.isArray(item.daysOfWeek)) {
+    item.daysOfWeek.forEach(addDay);
+  }
+
+  if (days.size === 0) {
+    addDay(item.dayOfWeek);
+  }
+
+  if (days.size === 0) {
+    days.add(0);
+  }
+
+  return Array.from(days).sort((left, right) => left - right);
+}
+
 function normalizePauses(value: unknown): AiPauseWindow[] {
   if (!Array.isArray(value)) {
     return DEFAULT_PAUSES;
@@ -348,12 +382,17 @@ function normalizePauses(value: unknown): AiPauseWindow[] {
 
   return value
     .filter(isRecord)
-    .map((item) => ({
-      dayOfWeek: Math.max(0, Math.min(6, Math.round(readNumber(item.dayOfWeek, 0)))),
-      enabled: readBoolean(item.enabled, true),
-      endTime: readString(item.endTime, '18:00'),
-      startTime: readString(item.startTime, '09:00'),
-    }))
+    .map((item) => {
+      const daysOfWeek = normalizePauseDays(item);
+
+      return {
+        dayOfWeek: daysOfWeek[0] ?? 0,
+        daysOfWeek,
+        enabled: readBoolean(item.enabled, true),
+        endTime: readString(item.endTime, '18:00'),
+        startTime: readString(item.startTime, '09:00'),
+      };
+    })
     .filter((item) => item.startTime < item.endTime);
 }
 
@@ -453,7 +492,7 @@ export async function updateAiSettings(
     enabled?: boolean | undefined;
     evaluationRules?: string | undefined;
     outputLanguage?: string | undefined;
-    pauses?: AiPauseWindow[] | undefined;
+    pauses?: unknown | undefined;
     reviewFields?: unknown | undefined;
     runtime?: unknown | undefined;
   },

@@ -5,9 +5,9 @@ use serde_json::Value;
 use sqlx::{PgPool, Row};
 use time::{OffsetDateTime, Weekday};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct PauseWindow {
-    day_of_week: u8,
+    days_of_week: Vec<u8>,
     end_minute: u16,
     start_minute: u16,
 }
@@ -108,7 +108,7 @@ fn read_pause_window(value: &Value) -> Option<PauseWindow> {
         return None;
     }
 
-    let day_of_week = value.get("dayOfWeek").and_then(read_day_index).unwrap_or(0);
+    let days_of_week = read_days_of_week(value);
     let start_minute = value
         .get("startTime")
         .and_then(Value::as_str)
@@ -119,10 +119,32 @@ fn read_pause_window(value: &Value) -> Option<PauseWindow> {
         .and_then(parse_time_minutes)?;
 
     (start_minute != end_minute).then_some(PauseWindow {
-        day_of_week,
+        days_of_week,
         end_minute,
         start_minute,
     })
+}
+
+fn read_days_of_week(value: &Value) -> Vec<u8> {
+    let mut days = value
+        .get("daysOfWeek")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(read_day_index).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    if days.is_empty() {
+        if let Some(day) = value.get("dayOfWeek").and_then(read_day_index) {
+            days.push(day);
+        }
+    }
+
+    if days.is_empty() {
+        days.push(0);
+    }
+
+    days.sort_unstable();
+    days.dedup();
+    days
 }
 
 fn read_day_index(value: &Value) -> Option<u8> {
@@ -167,18 +189,19 @@ fn minute_of_day(now: OffsetDateTime) -> u16 {
 }
 
 impl PauseWindow {
-    fn contains(self, current_day: u8, current_minute: u16) -> bool {
+    fn contains(&self, current_day: u8, current_minute: u16) -> bool {
         if self.start_minute < self.end_minute {
-            current_day == self.day_of_week
+            self.days_of_week.contains(&current_day)
                 && current_minute >= self.start_minute
                 && current_minute < self.end_minute
         } else {
-            (current_day == self.day_of_week && current_minute >= self.start_minute)
-                || (current_day == next_day(self.day_of_week) && current_minute < self.end_minute)
+            (self.days_of_week.contains(&current_day) && current_minute >= self.start_minute)
+                || (self.days_of_week.contains(&previous_day(current_day))
+                    && current_minute < self.end_minute)
         }
     }
 }
 
-fn next_day(day: u8) -> u8 {
-    (day + 1) % 7
+fn previous_day(day: u8) -> u8 {
+    (day + 6) % 7
 }

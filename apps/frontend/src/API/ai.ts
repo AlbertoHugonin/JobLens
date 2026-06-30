@@ -15,7 +15,8 @@ export interface AiRuntimeSettingsDto {
 }
 
 export interface AiPauseWindowDto {
-  dayOfWeek: number;
+  dayOfWeek?: number | undefined;
+  daysOfWeek?: number[] | undefined;
   enabled: boolean;
   endTime: string;
   startTime: string;

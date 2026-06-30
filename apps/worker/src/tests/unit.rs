@@ -143,6 +143,60 @@ fn ai_pause_supports_cross_midnight_window() {
 }
 
 #[test]
+fn ai_pause_supports_multiple_days() {
+    let pauses = json!([
+        {
+            "daysOfWeek": [1, 3],
+            "enabled": true,
+            "endTime": "18:00",
+            "startTime": "09:00"
+        }
+    ]);
+
+    assert!(is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::June, 29, 12, 0),
+    ));
+    assert!(!is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::June, 30, 12, 0),
+    ));
+    assert!(is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::July, 1, 12, 0),
+    ));
+}
+
+#[test]
+fn ai_pause_cross_midnight_applies_from_each_selected_day() {
+    let pauses = json!([
+        {
+            "daysOfWeek": [1, 3],
+            "enabled": true,
+            "endTime": "02:00",
+            "startTime": "22:00"
+        }
+    ]);
+
+    assert!(is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::June, 30, 1, 30),
+    ));
+    assert!(!is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::June, 30, 23, 0),
+    ));
+    assert!(is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::July, 1, 23, 0),
+    ));
+    assert!(is_ai_paused(
+        &pauses,
+        utc_datetime(2026, Month::July, 2, 1, 30),
+    ));
+}
+
+#[test]
 fn ai_pause_ignores_disabled_windows() {
     assert!(!is_ai_paused(
         &json!([

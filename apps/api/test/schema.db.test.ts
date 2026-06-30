@@ -1000,6 +1000,7 @@ describe('database migrations', () => {
         pauses: [
           {
             dayOfWeek: 1,
+            daysOfWeek: [1, 3, 5],
             enabled: true,
             endTime: '18:00',
             startTime: '09:00',
@@ -1130,6 +1131,7 @@ describe('database migrations', () => {
         pauses: [
           {
             dayOfWeek: 1,
+            daysOfWeek: [1, 3, 5],
             enabled: true,
           },
         ],

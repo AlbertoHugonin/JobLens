@@ -15,6 +15,7 @@ export interface AiStateSnapshot {
     outputLanguage: 'en' | 'it' | 'job_language' | 'profile_language';
     pauses: Array<{
       dayOfWeek: number;
+      daysOfWeek: number[];
       enabled: boolean;
       endTime: string;
       startTime: string;

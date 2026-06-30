@@ -15,7 +15,7 @@ import Stack from 'react-bootstrap/Stack';
 import { useAiSettings } from '../../contexts/AiSettingsContext';
 import {
   aiPauseDayOptions,
-  getAiPauseDayLabel,
+  getAiPauseDaysLabel,
   type AiPauseWindow,
   type AiRuntimeSettings,
 } from '../../models/ai';
@@ -32,7 +32,7 @@ export function AiBehaviorPanel() {
   const [runtime, setRuntime] = useState<AiRuntimeSettings | null>(null);
   const [pauses, setPauses] = useState<AiPauseWindow[]>([]);
   const [showPause, setShowPause] = useState(false);
-  const [pauseDay, setPauseDay] = useState(1);
+  const [pauseDays, setPauseDays] = useState<number[]>([1]);
   const [pauseStart, setPauseStart] = useState('18:00');
   const [pauseEnd, setPauseEnd] = useState('23:00');
   const [pauseEnabled, setPauseEnabled] = useState(true);
@@ -60,7 +60,7 @@ export function AiBehaviorPanel() {
   };
 
   const openPause = () => {
-    setPauseDay(1);
+    setPauseDays([1]);
     setPauseStart('18:00');
     setPauseEnd('23:00');
     setPauseEnabled(true);
@@ -68,15 +68,38 @@ export function AiBehaviorPanel() {
     setShowPause(true);
   };
 
+  const togglePauseDay = (day: number) => {
+    setPauseDays((current) => {
+      if (current.includes(day)) {
+        return current.filter((item) => item !== day);
+      }
+
+      return [...current, day].sort((left, right) => left - right);
+    });
+  };
+
   const handleAddPause = () => {
+    if (pauseDays.length === 0) {
+      setPauseError('Seleziona almeno un giorno');
+      return;
+    }
+
     if (pauseStart >= pauseEnd) {
       setPauseError("La fine pausa deve essere successiva all'inizio");
       return;
     }
 
+    const daysOfWeek = [...pauseDays].sort((left, right) => left - right);
+
     setPauses((items) => [
       ...items,
-      { dayOfWeek: pauseDay, enabled: pauseEnabled, endTime: pauseEnd, startTime: pauseStart },
+      {
+        dayOfWeek: daysOfWeek[0] ?? 0,
+        daysOfWeek,
+        enabled: pauseEnabled,
+        endTime: pauseEnd,
+        startTime: pauseStart,
+      },
     ]);
     setPauseError(null);
     setShowPause(false);
@@ -162,7 +185,9 @@ export function AiBehaviorPanel() {
                 <Form.Label>num_ctx</Form.Label>
                 <Form.Control
                   min={512}
-                  onChange={(event) => updateRuntime('numCtx', readNumber(event.target.value, 8192))}
+                  onChange={(event) =>
+                    updateRuntime('numCtx', readNumber(event.target.value, 8192))
+                  }
                   type="number"
                   value={runtime.numCtx}
                 />
@@ -248,7 +273,10 @@ export function AiBehaviorPanel() {
       </Card.Body>
       <Card.Body className="border-top">
         <Stack className="gap-3">
-          <Stack direction="horizontal" className="justify-content-between align-items-center gap-2">
+          <Stack
+            direction="horizontal"
+            className="justify-content-between align-items-center gap-2"
+          >
             <span className="form-eyebrow">Pause programmate</span>
             <Stack direction="horizontal" className="gap-2 align-items-center">
               <Badge bg="secondary" className="font-mono">
@@ -266,11 +294,11 @@ export function AiBehaviorPanel() {
             <ListGroup>
               {pauses.map((pause, index) => (
                 <ListGroup.Item
-                  key={`${pause.dayOfWeek}-${pause.startTime}-${pause.endTime}-${index}`}
+                  key={`${pause.daysOfWeek.join(',')}-${pause.startTime}-${pause.endTime}-${index}`}
                 >
                   <Stack direction="horizontal" className="justify-content-between gap-3">
                     <span className="small">
-                      {getAiPauseDayLabel(pause.dayOfWeek)}{' '}
+                      {getAiPauseDaysLabel(pause.daysOfWeek)}{' '}
                       <span className="font-mono">
                         {pause.startTime}-{pause.endTime}
                       </span>
@@ -297,9 +325,7 @@ export function AiBehaviorPanel() {
       </Card.Body>
       <Card.Footer>
         <Stack direction="horizontal" className="justify-content-between gap-3">
-          <span className="small text-secondary">
-            Salva toggle, parametri e pause programmate.
-          </span>
+          <span className="small text-secondary">Salva toggle, parametri e pause programmate.</span>
           <Button disabled={savingSettings} onClick={() => void handleSave()} variant="primary">
             {savingSettings ? <Spinner animation="border" className="me-2" size="sm" /> : null}
             Salva comportamento
@@ -314,18 +340,20 @@ export function AiBehaviorPanel() {
         <Modal.Body>
           <Stack className="gap-3">
             {pauseError ? <ErrorState message={pauseError} /> : null}
-            <Form.Group controlId="ai-pause-day">
-              <Form.Label>Giorno</Form.Label>
-              <Form.Select
-                onChange={(event) => setPauseDay(readNumber(event.target.value, 1))}
-                value={pauseDay}
-              >
+            <Form.Group controlId="ai-pause-days">
+              <Form.Label>Giorni</Form.Label>
+              <div className="d-flex flex-wrap gap-2">
                 {aiPauseDayOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
+                  <Form.Check
+                    checked={pauseDays.includes(option.value)}
+                    id={`ai-pause-day-${option.value}`}
+                    key={option.value}
+                    label={option.label}
+                    onChange={() => togglePauseDay(option.value)}
+                    type="checkbox"
+                  />
                 ))}
-              </Form.Select>
+              </div>
             </Form.Group>
             <Row className="g-2">
               <Col xs={6}>

@@ -25,7 +25,6 @@ import {
   type JobAvailabilityStatus,
   type JobFilters,
   type JobLocalStatus,
-  type JobReviewDecision,
   type JobReviewDecisionFilter,
   type JobScope,
   type JobSortBy,

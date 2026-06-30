@@ -60,8 +60,8 @@ function normalizeString(value: string, fallback = ''): string {
   return value.trim() || fallback;
 }
 
-function normalizeNumber(value: number, fallback: number): number {
-  return Number.isFinite(value) ? value : fallback;
+function normalizeNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function normalizeReviewOutputLanguage(value: string): AiReviewOutputLanguage {
@@ -165,9 +165,45 @@ export function normalizeAiRuntime(dto: AiRuntimeSettingsDto): AiRuntimeSettings
   };
 }
 
+function normalizeDayOfWeek(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(6, Math.round(value)));
+}
+
+function normalizePauseDays(dto: AiPauseWindowDto): number[] {
+  const days = new Set<number>();
+  const addDay = (value: unknown) => {
+    const day = normalizeDayOfWeek(value);
+
+    if (day !== null) {
+      days.add(day);
+    }
+  };
+
+  if (Array.isArray(dto.daysOfWeek)) {
+    dto.daysOfWeek.forEach(addDay);
+  }
+
+  if (days.size === 0) {
+    addDay(dto.dayOfWeek);
+  }
+
+  if (days.size === 0) {
+    days.add(0);
+  }
+
+  return Array.from(days).sort((left, right) => left - right);
+}
+
 export function normalizeAiPause(dto: AiPauseWindowDto): AiPauseWindow {
+  const daysOfWeek = normalizePauseDays(dto);
+
   return {
-    dayOfWeek: Math.max(0, Math.min(6, Math.round(normalizeNumber(dto.dayOfWeek, 0)))),
+    dayOfWeek: daysOfWeek[0] ?? 0,
+    daysOfWeek,
     enabled: dto.enabled,
     endTime: normalizeString(dto.endTime, '18:00'),
     startTime: normalizeString(dto.startTime, '09:00'),

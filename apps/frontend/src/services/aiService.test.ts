@@ -50,6 +50,12 @@ describe('aiService', () => {
           endTime: '18:00',
           startTime: '09:00',
         },
+        {
+          daysOfWeek: [1, 3, 9],
+          enabled: true,
+          endTime: '19:00',
+          startTime: '10:00',
+        },
       ],
       reviewFields: [
         {
@@ -92,7 +98,13 @@ describe('aiService', () => {
     expect(settings.runtime.timeoutSeconds).toBe(5);
     expect(settings.pauses[0]).toMatchObject({
       dayOfWeek: 6,
+      daysOfWeek: [6],
       startTime: '09:00',
+    });
+    expect(settings.pauses[1]).toMatchObject({
+      dayOfWeek: 1,
+      daysOfWeek: [1, 3, 6],
+      startTime: '10:00',
     });
   });
 

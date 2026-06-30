@@ -53,7 +53,8 @@ interface AiSettingsBody {
   outputLanguage?: string | undefined;
   pauses?:
     | Array<{
-        dayOfWeek: number;
+        dayOfWeek?: number | undefined;
+        daysOfWeek?: number[] | undefined;
         enabled: boolean;
         endTime: string;
         startTime: string;
@@ -142,10 +143,17 @@ const runtimeSchema = {
 
 const pauseSchema = {
   type: 'object',
-  required: ['dayOfWeek', 'enabled', 'endTime', 'startTime'],
+  required: ['enabled', 'endTime', 'startTime'],
   additionalProperties: false,
+  anyOf: [{ required: ['dayOfWeek'] }, { required: ['daysOfWeek'] }],
   properties: {
     dayOfWeek: { type: 'integer', minimum: 0, maximum: 6 },
+    daysOfWeek: {
+      type: 'array',
+      items: { type: 'integer', minimum: 0, maximum: 6 },
+      minItems: 1,
+      uniqueItems: true,
+    },
     enabled: { type: 'boolean' },
     endTime: { type: 'string', pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' },
     startTime: { type: 'string', pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' },
