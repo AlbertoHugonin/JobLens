@@ -67,6 +67,16 @@ docker compose start api worker frontend
 For a fresh restore, recreate the PostgreSQL volume intentionally, then restore
 the dump before starting the API and worker.
 
+## Debug reset
+
+When UI debug mode is enabled, **Impostazioni -> Debug** exposes a destructive
+reset action. It clears application data from PostgreSQL (jobs, searches,
+sessions, activities, raw payloads, AI endpoints/models/reviews and custom
+settings) and restores only the minimal seed records. It keeps the schema and
+`schema_migrations`, so it is faster than deleting the Docker volume but has the
+same practical effect for app data. Take a backup first if anything should be
+kept.
+
 ## Sensitive local files
 
 Any `*.har` file (and anything under `docs/har_*`) is sensitive: HAR captures

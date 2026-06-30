@@ -158,10 +158,10 @@ describe('database migrations', () => {
     const firstRun = await runMigrations(pool);
     const secondRun = await runMigrations(pool);
 
-    expect(firstRun.applied.map((migration) => migration.id)).toEqual([1, 2, 3]);
-    expect(firstRun.latestVersion).toBe(3);
+    expect(firstRun.applied.map((migration) => migration.id)).toEqual([1, 2, 3, 4]);
+    expect(firstRun.latestVersion).toBe(4);
     expect(secondRun.applied).toEqual([]);
-    expect(secondRun.latestVersion).toBe(3);
+    expect(secondRun.latestVersion).toBe(4);
 
     const tables = await pool.query<{ table_name: string }>(
       `
@@ -208,14 +208,14 @@ describe('database migrations', () => {
     expect(schemaResponse.statusCode).toBe(200);
     expect(schemaResponse.json()).toMatchObject({
       data: {
-        schemaVersion: 3,
+        schemaVersion: 4,
       },
     });
     expect(settingsResponse.statusCode).toBe(200);
     expect(settingsResponse.json()).toMatchObject({
       data: {
         providers: [{ key: 'linkedin', name: 'LinkedIn', enabled: true }],
-        schemaVersion: 3,
+        schemaVersion: 4,
       },
     });
   }, 30_000);
@@ -1952,5 +1952,181 @@ describe('database migrations', () => {
         id: secondSearch.id,
       },
     });
+  }, 30_000);
+
+  it('resets application data from the debug endpoint while keeping schema seeds', async () => {
+    await runMigrations(pool);
+    const provider = await pool.query<{ id: string }>(
+      "SELECT id FROM providers WHERE provider_key = 'linkedin'",
+    );
+    const providerId = provider.rows[0]?.id;
+    expect(providerId).toBeTruthy();
+
+    const search = await pool.query<{ id: string }>(
+      `
+        INSERT INTO searches(provider_id, name, query)
+        VALUES ($1, 'M14 Reset Search', '{"keywords":"reset"}'::jsonb)
+        RETURNING id
+      `,
+      [providerId],
+    );
+    const job = await pool.query<{ id: string }>(
+      `
+        INSERT INTO jobs(title, company_name, location_text)
+        VALUES ('M14 Reset Job', 'Reset Co', 'Remote')
+        RETURNING id
+      `,
+    );
+    const activity = await pool.query<{ id: string }>(
+      `
+        INSERT INTO activities(activity_type, status, subject_type)
+        VALUES ('linkedin_collect', 'failed', 'search')
+        RETURNING id
+      `,
+    );
+    const endpoint = await pool.query<{ id: string }>(
+      `
+        INSERT INTO ai_endpoints(name, base_url, enabled, is_active, config)
+        VALUES ('M14 endpoint', 'http://127.0.0.1:11434', true, true, '{}'::jsonb)
+        RETURNING id
+      `,
+    );
+    const external = await pool.query<{ id: string }>(
+      `
+        INSERT INTO external_jobs(provider_id, job_id, external_id)
+        VALUES ($1, $2, 'm14-reset')
+        RETURNING id
+      `,
+      [providerId, job.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO provider_sessions(provider_id, label, session_data)
+        VALUES ($1, 'M14 session', '{"secrets":{"li_at":"secret"}}'::jsonb)
+      `,
+      [providerId],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_search_presence(job_id, search_id, last_activity_id)
+        VALUES ($1, $2, $3)
+      `,
+      [job.rows[0]?.id, search.rows[0]?.id, activity.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_descriptions(job_id, content_hash, text)
+        VALUES ($1, 'm14-description', 'Reset description')
+      `,
+      [job.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO ai_models(endpoint_id, name, installed)
+        VALUES ($1, 'm14-model', true)
+      `,
+      [endpoint.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_reviews(job_id, endpoint_id, model_name, profile_hash, rules_hash, decision, score)
+        VALUES ($1, $2, 'm14-model', 'profile', 'rules', 'apply', 75)
+      `,
+      [job.rows[0]?.id, endpoint.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO raw_payloads(provider_id, activity_id, external_job_id, response_status, payload)
+        VALUES ($1, $2, $3, 500, '{"error":"reset"}'::jsonb)
+      `,
+      [providerId, activity.rows[0]?.id, external.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO activity_logs(activity_id, level, message)
+        VALUES ($1, 'error', 'reset fixture')
+      `,
+      [activity.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO settings(key, value, description)
+        VALUES ('m14.custom_setting', to_jsonb('reset'::text), 'Reset fixture setting')
+      `,
+    );
+
+    const app = await buildApp(readConfig({ NODE_ENV: 'test', API_RUN_MIGRATIONS: 'false' }), {
+      db: pool,
+    });
+    const unsafeReset = await app.inject({
+      method: 'POST',
+      payload: {
+        confirmation: 'NO',
+      },
+      url: '/api/v1/debug/reset-app',
+    });
+    const reset = await app.inject({
+      method: 'POST',
+      payload: {
+        confirmation: 'RESET',
+      },
+      url: '/api/v1/debug/reset-app',
+    });
+    const afterReset = await pool.query<{
+      activities: number;
+      ai_endpoints: number;
+      jobs: number;
+      providers: number;
+      searches: number;
+      settings: number;
+    }>(`
+      SELECT
+        (SELECT COUNT(*)::integer FROM activities) AS activities,
+        (SELECT COUNT(*)::integer FROM ai_endpoints) AS ai_endpoints,
+        (SELECT COUNT(*)::integer FROM jobs) AS jobs,
+        (SELECT COUNT(*)::integer FROM providers) AS providers,
+        (SELECT COUNT(*)::integer FROM searches) AS searches,
+        (SELECT COUNT(*)::integer FROM settings) AS settings
+    `);
+    const providerKeys = await pool.query<{ provider_key: string }>(
+      'SELECT provider_key FROM providers ORDER BY provider_key ASC',
+    );
+    const settingKeys = await pool.query<{ key: string; value: unknown }>(
+      'SELECT key, value FROM settings ORDER BY key ASC',
+    );
+
+    await app.close();
+
+    expect(unsafeReset.statusCode).toBe(400);
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toMatchObject({
+      data: {
+        seeded: {
+          providers: 1,
+          settings: 5,
+        },
+      },
+    });
+    expect(reset.json().data.deleted.aiEndpoints).toBeGreaterThanOrEqual(1);
+    expect(reset.json().data.deleted.jobs).toBeGreaterThanOrEqual(1);
+    expect(reset.json().data.deleted.providerSessions).toBeGreaterThanOrEqual(1);
+    expect(reset.json().data.deleted.searches).toBeGreaterThanOrEqual(1);
+    expect(afterReset.rows[0]).toEqual({
+      activities: 0,
+      ai_endpoints: 0,
+      jobs: 0,
+      providers: 1,
+      searches: 0,
+      settings: 5,
+    });
+    expect(providerKeys.rows).toEqual([{ provider_key: 'linkedin' }]);
+    expect(settingKeys.rows.map((row) => row.key)).toEqual([
+      'ai.active_endpoint_id',
+      'ai.enabled',
+      'app.name',
+      'app.schema_target',
+      'evaluation.rules.template_version',
+    ]);
+    expect(settingKeys.rows.find((row) => row.key === 'app.schema_target')?.value).toBe(4);
   }, 30_000);
 });

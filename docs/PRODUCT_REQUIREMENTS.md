@@ -650,6 +650,9 @@ Note:
 
 - `POST /api/v1/exports/jobs-reviews`
 - `POST /api/v1/debug/bundle`
+- `POST /api/v1/debug/reset-app` con conferma esplicita `RESET`, disponibile
+  come strumento distruttivo di debug per svuotare dati applicativi e
+  impostazioni personalizzate mantenendo schema e seed minimi.
 
 ### 7.8 Eventi
 

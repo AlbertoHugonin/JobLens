@@ -111,6 +111,10 @@ field with `{ key, label, description, enabled, maxItems }`.
 - `DELETE /api/v1/ai/reviews`
 - `POST /api/v1/exports/jobs-reviews`
 - `POST /api/v1/debug/bundle`
+- `POST /api/v1/debug/reset-app` — destructive debug-only reset. Requires
+  `{ "confirmation": "RESET" }`, deletes all application data and custom
+  settings, then restores the minimal provider/settings seed data while keeping
+  schema migrations.
 
 ## Worker metrics
 
