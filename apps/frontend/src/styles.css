@@ -620,18 +620,27 @@ h6,
   min-width: 0;
 }
 
+.job-list-place {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .job-list-location {
-  display: block;
-  max-width: 100%;
+  /* flex child: don't grow (keep the modality chip next to the text rather
+     than pushed to the far edge), but allow shrinking below the text width so
+     it truncates with an ellipsis instead of pushing the chip past the card edge. */
+  flex: 0 1 auto;
   min-width: 0;
 }
 
 .job-list-workplace-badge {
   border: 1px solid var(--joblens-border);
   display: inline-flex;
+  /* never shrink: the chip stays whole, the location truncates around it. */
+  flex: 0 0 auto;
   font-weight: 500;
-  margin-left: 0.35rem;
-  vertical-align: 0.08em;
 }
 
 .job-detail-heading {

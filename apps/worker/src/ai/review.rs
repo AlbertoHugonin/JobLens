@@ -380,10 +380,6 @@ pub(crate) fn normalize_review_output(
     }
 }
 
-pub(crate) fn diagnostic_review(error: &str) -> NormalizedReview {
-    failed_review(error)
-}
-
 pub(crate) fn hash_text(value: &str) -> String {
     let hash = Sha256::digest(value.as_bytes());
     hash.iter()

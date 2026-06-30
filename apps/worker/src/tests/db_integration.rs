@@ -8,6 +8,8 @@ use tokio::{sync::watch, time::sleep};
 use url::Url;
 use uuid::Uuid;
 
+use crate::activities::ClaimedActivity;
+
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -592,7 +594,7 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
     assert_activity_status(pool, &model_fixture.activity_id, "success").await?;
     assert_model_installed(pool, &model_fixture.model_id).await?;
 
-    let ai_fixture = insert_ai_review_fixture(pool, true).await?;
+    let ai_fixture = insert_ai_review_fixture(pool, AiReviewFixtureKind::Valid).await?;
     let ai_activity = claim_next_activity(pool, &config)
         .await?
         .context("expected AI review activity")?;
@@ -600,9 +602,29 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
     let mut ai_shutdown = shutdown_rx.clone();
     process_activity(pool, &config, &metrics, ai_activity, &mut ai_shutdown).await?;
     assert_activity_status(pool, &ai_fixture.activity_id, "success").await?;
-    assert_ai_review_success(pool, &ai_fixture.job_id).await?;
+    assert_ai_review_success(pool, &ai_fixture.job_id, "manual").await?;
 
-    let invalid_ai_fixture = insert_ai_review_fixture(pool, false).await?;
+    let retry_ai_fixture =
+        insert_ai_review_fixture(pool, AiReviewFixtureKind::InvalidThenValid).await?;
+    let retry_ai_activity = claim_next_activity(pool, &config)
+        .await?
+        .context("expected retrying AI review activity")?;
+    assert_eq!(retry_ai_activity.id, retry_ai_fixture.activity_id);
+    let mut retry_ai_shutdown = shutdown_rx.clone();
+    process_activity(
+        pool,
+        &config,
+        &metrics,
+        retry_ai_activity,
+        &mut retry_ai_shutdown,
+    )
+    .await?;
+    assert_activity_status(pool, &retry_ai_fixture.activity_id, "success").await?;
+    assert_ai_review_success(pool, &retry_ai_fixture.job_id, "automatic").await?;
+    assert_ai_review_count(pool, &retry_ai_fixture.job_id, 1).await?;
+
+    let invalid_ai_fixture =
+        insert_ai_review_fixture(pool, AiReviewFixtureKind::InvalidFinal).await?;
     let invalid_ai_activity = claim_next_activity(pool, &config)
         .await?
         .context("expected invalid AI review activity")?;
@@ -616,8 +638,8 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
         &mut invalid_ai_shutdown,
     )
     .await?;
-    assert_activity_status(pool, &invalid_ai_fixture.activity_id, "success").await?;
-    assert_ai_review_failed(pool, &invalid_ai_fixture.job_id).await?;
+    assert_activity_status(pool, &invalid_ai_fixture.activity_id, "failed").await?;
+    assert_ai_review_count(pool, &invalid_ai_fixture.job_id, 0).await?;
 
     let jsonl_export_id = insert_export_fixture(pool, "jobs_reviews_jsonl").await?;
     let jsonl_export = claim_next_activity(pool, &config)
@@ -668,6 +690,13 @@ async fn run_worker_db_assertions(pool: &PgPool, test_prefix: &str) -> Result<()
         &automatic_model_name,
     )
     .await?;
+    assert_linkedin_collection_continues_when_raw_payload_storage_fails(
+        pool,
+        &config,
+        &metrics,
+        shutdown_rx.clone(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -686,6 +715,13 @@ struct ModelInstallFixture {
 struct AiReviewFixture {
     activity_id: String,
     job_id: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AiReviewFixtureKind {
+    InvalidFinal,
+    InvalidThenValid,
+    Valid,
 }
 
 async fn insert_test_activity(pool: &PgPool, activity_type: &str, status: &str) -> Result<String> {
@@ -886,7 +922,10 @@ async fn insert_model_install_fixture(pool: &PgPool) -> Result<ModelInstallFixtu
     })
 }
 
-async fn insert_ai_review_fixture(pool: &PgPool, valid_json: bool) -> Result<AiReviewFixture> {
+async fn insert_ai_review_fixture(
+    pool: &PgPool,
+    kind: AiReviewFixtureKind,
+) -> Result<AiReviewFixture> {
     let suffix = Uuid::new_v4().simple().to_string();
     let endpoint = sqlx::query(
         r#"
@@ -948,38 +987,50 @@ async fn insert_ai_review_fixture(pool: &PgPool, valid_json: bool) -> Result<AiR
     .bind(json!({
         "modelName": format!("m11-fixture-model-{suffix}"),
         "priorityModelName": format!("m11-fixture-model-{suffix}"),
+        "retryAttempts": 1,
+        "retryDelaySeconds": 0,
         "timeoutSeconds": 5
     }))
     .execute(pool)
     .await?;
 
-    let fixture_output = if valid_json {
-        json!({
-            "decision": "apply",
-            "score": 87,
-            "seniority_fit": "good",
-            "skill_fit": "good",
-            "location_fit": "good",
-            "blockers": [],
-            "matching_points": ["Rust", "Tokio", "PostgreSQL"],
-            "explicit_optional_matches": [],
-            "mandatory_gaps": [],
-            "caution_notes": [],
-            "reason": "Strong backend fit"
-        })
-        .to_string()
-    } else {
-        "this is not json".to_string()
-    };
-    let payload = json!({
+    let valid_output = json!({
+        "decision": "apply",
+        "score": 87,
+        "seniority_fit": "good",
+        "skill_fit": "good",
+        "location_fit": "good",
+        "blockers": [],
+        "matching_points": ["Rust", "Tokio", "PostgreSQL"],
+        "explicit_optional_matches": [],
+        "mandatory_gaps": [],
+        "caution_notes": [],
+        "reason": "Strong backend fit"
+    })
+    .to_string();
+    let invalid_output = "this is not json";
+    let mut payload = json!({
         "endpointId": endpoint_id,
         "endpointName": format!("M11 fixture endpoint {suffix}"),
-        "fixtureAiOutput": fixture_output,
         "jobId": job_id,
-        "mode": if valid_json { "manual" } else { "automatic" },
         "modelId": model_id,
         "modelName": format!("m11-fixture-model-{suffix}")
     });
+    match kind {
+        AiReviewFixtureKind::Valid => {
+            payload["fixtureAiOutput"] = json!(valid_output);
+            payload["mode"] = json!("manual");
+        }
+        AiReviewFixtureKind::InvalidThenValid => {
+            payload["fixtureAiOutputs"] = json!([invalid_output, valid_output]);
+            payload["mode"] = json!("automatic");
+        }
+        AiReviewFixtureKind::InvalidFinal => {
+            payload["aiReviewAttempts"] = json!(2);
+            payload["fixtureAiOutput"] = json!(invalid_output);
+            payload["mode"] = json!("automatic");
+        }
+    }
     let activity = sqlx::query(
         r#"
             INSERT INTO activities(activity_type, status, subject_type, subject_id, payload, source, progress_total)
@@ -1234,6 +1285,183 @@ async fn insert_linkedin_collect_fixture(pool: &PgPool) -> Result<LinkedInCollec
         provider_id,
         search_id,
     })
+}
+
+async fn insert_minimal_linkedin_collect_fixture(pool: &PgPool) -> Result<LinkedInCollectFixture> {
+    let provider = sqlx::query(
+        r#"
+            INSERT INTO providers(provider_key, name, enabled, config)
+            VALUES ('linkedin', 'LinkedIn', true, '{}'::jsonb)
+            ON CONFLICT (provider_key) DO UPDATE SET enabled = true
+            RETURNING id::text AS id
+            "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    let provider_id: String = provider.try_get("id")?;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let external_id = format!("m7-raw-fail-{suffix}");
+    let search_query = json!({
+        "distance": "25",
+        "geoId": "103350119",
+        "keywords": "Raw payload failure",
+        "location": "Italy",
+        "providerKey": "linkedin",
+        "publicUrl": "https://www.linkedin.com/jobs/search/?keywords=Raw+payload+failure&location=Italy&geoId=103350119&distance=25",
+    });
+    let search = sqlx::query(
+        r#"
+            INSERT INTO searches(provider_id, name, query, enabled)
+            VALUES ($1::uuid, 'M7 raw payload failure fixture search', $2::jsonb, true)
+            RETURNING id::text AS id
+            "#,
+    )
+    .bind(&provider_id)
+    .bind(&search_query)
+    .fetch_one(pool)
+    .await?;
+    let search_id: String = search.try_get("id")?;
+    let mut fixture_descriptions = serde_json::Map::new();
+    fixture_descriptions.insert(
+        external_id.clone(),
+        json!({ "text": "Role description after raw payload storage failure" }),
+    );
+    let job_url = format!("https://www.linkedin.com/jobs/view/{external_id}/");
+    let payload = json!({
+        "fixturePages": [
+            {
+                "payload": {
+                    "data": {
+                        "paging": { "total": 1 },
+                        "elements": [
+                            {
+                                "jobPostingId": &external_id,
+                                "title": "Raw Payload Resilience Engineer",
+                                "companyName": "Delta",
+                                "formattedLocation": "Turin, Italy",
+                                "jobPostingUrl": job_url
+                            }
+                        ]
+                    }
+                }
+            }
+        ],
+        "fixtureDescriptions": serde_json::Value::Object(fixture_descriptions),
+        "providerKey": "linkedin",
+        "searchId": search_id
+    });
+    let activity = sqlx::query(
+        r#"
+            INSERT INTO activities(activity_type, status, subject_type, subject_id, payload, source)
+            VALUES ('linkedin_collect', 'queued', 'search', $1::uuid, $2::jsonb, 'worker-test')
+            RETURNING id::text AS id
+            "#,
+    )
+    .bind(&search_id)
+    .bind(&payload)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(LinkedInCollectFixture {
+        activity_id: activity.try_get("id")?,
+        provider_id,
+        search_id,
+    })
+}
+
+async fn assert_linkedin_collection_continues_when_raw_payload_storage_fails(
+    pool: &PgPool,
+    config: &WorkerConfig,
+    metrics: &TestWorkerMetrics,
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> Result<()> {
+    let fixture = insert_minimal_linkedin_collect_fixture(pool).await?;
+    sqlx::query(
+        r#"
+            ALTER TABLE raw_payloads
+            ADD CONSTRAINT raw_payloads_test_block CHECK (false) NOT VALID
+            "#,
+    )
+    .execute(pool)
+    .await?;
+
+    let activity = claim_activity_by_id(pool, config, &fixture.activity_id)
+        .await?
+        .context("expected raw payload resilience collection activity")?;
+    assert_eq!(activity.id, fixture.activity_id);
+    let process_result = process_activity(pool, config, metrics, activity, &mut shutdown_rx).await;
+    let drop_constraint_result =
+        sqlx::query("ALTER TABLE raw_payloads DROP CONSTRAINT raw_payloads_test_block")
+            .execute(pool)
+            .await;
+    drop_constraint_result?;
+    process_result?;
+    assert_activity_status(pool, &fixture.activity_id, "success").await?;
+
+    let row = sqlx::query(
+        r#"
+            SELECT
+              (SELECT COUNT(*)::bigint FROM raw_payloads WHERE activity_id = $1::uuid) AS raw_count,
+              (
+                SELECT COUNT(*)::bigint
+                FROM activity_logs
+                WHERE activity_id = $1::uuid
+                  AND level = 'warn'
+                  AND message = 'Skipped LinkedIn raw payload storage'
+                  AND data ->> 'responseStatus' = '200'
+              ) AS warning_count
+            "#,
+    )
+    .bind(&fixture.activity_id)
+    .fetch_one(pool)
+    .await?;
+    let raw_count: i64 = row.try_get("raw_count")?;
+    let warning_count: i64 = row.try_get("warning_count")?;
+    assert_eq!(raw_count, 0);
+    assert_eq!(warning_count, 1);
+
+    Ok(())
+}
+
+async fn claim_activity_by_id(
+    pool: &PgPool,
+    config: &WorkerConfig,
+    activity_id: &str,
+) -> Result<Option<ClaimedActivity>> {
+    let lease_seconds = duration_as_i64_seconds(config.lease_duration);
+    let row = sqlx::query(
+        r#"
+            UPDATE activities
+            SET
+              status = 'running',
+              lease_owner = $1,
+              lease_expires_at = now() + ($2::text || ' seconds')::interval,
+              heartbeat_at = now(),
+              started_at = COALESCE(started_at, now()),
+              attempt = attempt + 1,
+              phase = 'claimed',
+              message = 'Claimed by worker',
+              error = NULL
+            WHERE id = $3::uuid
+              AND status = 'queued'
+            RETURNING id::text AS id, activity_type, payload, subject_id::text AS subject_id
+            "#,
+    )
+    .bind(&config.worker_id)
+    .bind(lease_seconds)
+    .bind(activity_id)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(|row| {
+        Ok(ClaimedActivity {
+            activity_type: row.try_get("activity_type")?,
+            id: row.try_get("id")?,
+            payload: row.try_get("payload")?,
+            subject_id: row.try_get("subject_id")?,
+        })
+    })
+    .transpose()
 }
 
 async fn read_job_id_by_external_id(
@@ -1503,7 +1731,7 @@ async fn assert_model_installed(pool: &PgPool, model_id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn assert_ai_review_success(pool: &PgPool, job_id: &str) -> Result<()> {
+async fn assert_ai_review_success(pool: &PgPool, job_id: &str, expected_mode: &str) -> Result<()> {
     let row = sqlx::query(
         r#"
             SELECT status, decision, score, result, raw_output, error, metrics
@@ -1530,39 +1758,23 @@ async fn assert_ai_review_success(pool: &PgPool, job_id: &str) -> Result<()> {
     assert_eq!(result["skill_fit"], "good");
     assert!(raw_output.is_some());
     assert!(error.is_none());
-    assert_eq!(metrics["mode"], "manual");
+    assert_eq!(metrics["mode"], expected_mode);
     Ok(())
 }
 
-async fn assert_ai_review_failed(pool: &PgPool, job_id: &str) -> Result<()> {
+async fn assert_ai_review_count(pool: &PgPool, job_id: &str, expected: i64) -> Result<()> {
     let row = sqlx::query(
         r#"
-            SELECT status, decision, score, result, raw_output, error, metrics
+            SELECT COUNT(*)::bigint AS count
             FROM job_reviews
             WHERE job_id = $1::uuid
-            ORDER BY created_at DESC
-            LIMIT 1
             "#,
     )
     .bind(job_id)
     .fetch_one(pool)
     .await?;
-    let status: String = row.try_get("status")?;
-    let decision: Option<String> = row.try_get("decision")?;
-    let score: Option<i32> = row.try_get("score")?;
-    let result: serde_json::Value = row.try_get("result")?;
-    let raw_output: Option<String> = row.try_get("raw_output")?;
-    let error: Option<String> = row.try_get("error")?;
-    let metrics: serde_json::Value = row.try_get("metrics")?;
-
-    assert_eq!(status, "failed");
-    assert!(decision.is_none());
-    assert!(score.is_none());
-    assert!(raw_output.as_deref() == Some("this is not json"));
-    let error = error.context("failed review should store an error")?;
-    assert!(error.contains("not valid JSON"));
-    assert_eq!(result["diagnostic"].as_str(), Some(error.as_str()));
-    assert_eq!(metrics["mode"], "automatic");
+    let actual: i64 = row.try_get("count")?;
+    assert_eq!(actual, expected);
     Ok(())
 }
 

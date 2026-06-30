@@ -489,6 +489,7 @@ function buildJobSelect(description: boolean): string {
       job_reviews.score
       FROM job_reviews
       WHERE job_reviews.job_id = jobs.id
+        AND job_reviews.status = 'success'
       ORDER BY
         CASE
           WHEN job_reviews.status = 'success'
@@ -550,6 +551,7 @@ export async function listJobs(pool: DatabasePool, filters: JobFilters): Promise
           SELECT job_reviews.decision, job_reviews.model_name
           FROM job_reviews
           WHERE job_reviews.job_id = jobs.id
+            AND job_reviews.status = 'success'
           ORDER BY
             CASE
               WHEN job_reviews.status = 'success'
@@ -591,6 +593,7 @@ export async function listJobIds(pool: DatabasePool, filters: JobFilters): Promi
         SELECT job_reviews.decision, job_reviews.model_name
         FROM job_reviews
         WHERE job_reviews.job_id = jobs.id
+          AND job_reviews.status = 'success'
         ORDER BY
           CASE
             WHEN job_reviews.status = 'success'
@@ -640,6 +643,7 @@ export async function readJobInsights(
           SELECT job_reviews.status, job_reviews.score
           FROM job_reviews
           WHERE job_reviews.job_id = jobs.id
+            AND job_reviews.status = 'success'
           ORDER BY
             CASE
               WHEN job_reviews.status = 'success'
@@ -674,6 +678,7 @@ export async function readJobInsights(
           SELECT job_reviews.decision, job_reviews.status
           FROM job_reviews
           WHERE job_reviews.job_id = jobs.id
+            AND job_reviews.status = 'success'
           ORDER BY
             CASE
               WHEN job_reviews.status = 'success'
@@ -784,6 +789,7 @@ export async function readJobReviews(
         LIMIT 1
       ) ai_runtime ON true
       WHERE job_reviews.job_id = $1::uuid
+        AND job_reviews.status = 'success'
       ORDER BY
         CASE
           WHEN job_reviews.status = 'success'

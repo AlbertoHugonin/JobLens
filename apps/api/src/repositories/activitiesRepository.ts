@@ -274,10 +274,6 @@ function findPayloadError(value: unknown, depth = 0): string | null {
     return null;
   }
 
-  if (typeof value === 'string') {
-    return value.trim() || null;
-  }
-
   if (typeof value !== 'object') {
     return null;
   }
@@ -294,19 +290,38 @@ function findPayloadError(value: unknown, depth = 0): string | null {
   }
 
   const record = value as Record<string, unknown>;
-  const preferredKeys = ['message', 'errorMessage', 'error', 'detail', 'title'];
+  const preferredKeys = [
+    'error',
+    'errorMessage',
+    'message',
+    'detail',
+    'details',
+    'title',
+    'statusText',
+  ];
 
   for (const key of preferredKeys) {
     const item = record[key];
     if (typeof item === 'string' && item.trim()) {
       return truncateText(redactSecretsFromText(item.trim()), 500);
     }
+    if (typeof item === 'object' && item !== null) {
+      const found = findPayloadError(item, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
   }
 
-  for (const item of Object.values(record)) {
-    const found = findPayloadError(item, depth + 1);
-    if (found) {
-      return found;
+  for (const [key, item] of Object.entries(record)) {
+    if (/error|exception|failure|problem/i.test(key)) {
+      if (typeof item === 'string' && item.trim()) {
+        return truncateText(redactSecretsFromText(item.trim()), 500);
+      }
+      const found = findPayloadError(item, depth + 1);
+      if (found) {
+        return found;
+      }
     }
   }
 
@@ -322,9 +337,12 @@ function mapLinkedInDebugRawPayload(row: LinkedInRawPayloadRow): LinkedInRawPayl
         : 'empty';
   const snippet = stringifyDebugPayload(row.payload, row.payload_text);
   const error =
-    row.payload !== null && row.payload !== undefined
+    row.response_status &&
+    row.response_status >= 400 &&
+    row.payload !== null &&
+    row.payload !== undefined
       ? findPayloadError(row.payload)
-      : row.payload_text
+      : row.response_status && row.response_status >= 400 && row.payload_text
         ? truncateText(redactSecretsFromText(row.payload_text), 500)
         : row.response_status && row.response_status >= 400
           ? `HTTP ${row.response_status}`

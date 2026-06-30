@@ -190,6 +190,26 @@ fn ai_fixture_completion_can_simulate_retry_success() {
 }
 
 #[test]
+fn ai_fixture_completion_can_vary_output_by_attempt() {
+    let payload = json!({
+        "fixtureAiOutputs": [
+            "this is not json",
+            "{\"decision\":\"apply\",\"score\":88}"
+        ]
+    });
+
+    let first = read_ai_fixture_completion(&payload, 1)
+        .expect("fixture should exist")
+        .expect("first attempt should return first output");
+    let second = read_ai_fixture_completion(&payload, 2)
+        .expect("fixture should exist")
+        .expect("second attempt should return second output");
+
+    assert_eq!(first.raw_output, "this is not json");
+    assert!(second.raw_output.contains("\"decision\":\"apply\""));
+}
+
+#[test]
 fn linkedin_query_maps_public_search_filters_to_voyager() {
     let query = json!({
         "currentJobId": null,

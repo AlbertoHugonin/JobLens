@@ -646,9 +646,21 @@ describe('database migrations', () => {
           response_status,
           content_type,
           elapsed_ms,
-          payload
+          payload,
+          created_at
         )
         VALUES (
+          $1::uuid,
+          $2::uuid,
+          'https://www.linkedin.com/voyager/api/voyagerJobsDashJobCards',
+          '{"query":"jobSearch"}'::jsonb,
+          200,
+          'application/vnd.linkedin.normalized+json+2.1; charset=UTF-8',
+          100,
+          '{"data":{"type":"com.linkedin.restli.common.CollectionResponse","elements":[]}}'::jsonb,
+          now() - interval '1 second'
+        ),
+        (
           $1::uuid,
           $2::uuid,
           'https://www.linkedin.com/voyager/api/voyagerJobsDashJobCards?csrf-token=secret-token&li_at=secret-cookie',
@@ -656,7 +668,8 @@ describe('database migrations', () => {
           500,
           'application/json',
           123,
-          '{"message":"LinkedIn upstream exploded","li_at":"secret-cookie","nested":{"JSESSIONID":"ajax:secret-session"}}'::jsonb
+          '{"message":"LinkedIn upstream exploded","li_at":"secret-cookie","nested":{"JSESSIONID":"ajax:secret-session"}}'::jsonb,
+          now()
         )
       `,
       [providerId, activityId],
@@ -679,8 +692,11 @@ describe('database migrations', () => {
         failed: 1,
         latestStatus: 500,
         providerKey: 'linkedin',
-        statusCounts: [{ count: 1, status: '500' }],
-        total: 1,
+        statusCounts: [
+          { count: 1, status: '200' },
+          { count: 1, status: '500' },
+        ],
+        total: 2,
       },
     });
     const item = payload.data.items[0];
@@ -691,6 +707,14 @@ describe('database migrations', () => {
     });
     expect(item.requestParams.cookie).toBe('[redacted]');
     expect(item.snippet).toContain('LinkedIn upstream exploded');
+    const okItem = payload.data.items.find(
+      (debugItem: { responseStatus: number }) => debugItem.responseStatus === 200,
+    );
+    expect(okItem).toMatchObject({
+      error: null,
+      responseStatus: 200,
+    });
+    expect(okItem.snippet).toContain('CollectionResponse');
     expect(JSON.stringify(payload)).not.toContain('secret-cookie');
     expect(JSON.stringify(payload)).not.toContain('secret-session');
     expect(JSON.stringify(payload)).not.toContain('secret-token');
@@ -1301,6 +1325,7 @@ describe('database migrations', () => {
         VALUES
           ($1, $2, 'm11-priority-model', 'profile', 'rules', 'success', 'apply', 92, '{}'::jsonb, '{}'::jsonb, now() - interval '1 day'),
           ($1, $2, 'm11-other-model', 'profile', 'rules', 'success', 'reject', 12, '{}'::jsonb, '{}'::jsonb, now()),
+          ($1, $2, 'm11-broken-model', 'profile', 'rules', 'failed', NULL, NULL, '{}'::jsonb, '{}'::jsonb, now() + interval '1 minute'),
           ($3, $2, 'm11-review-model', 'profile', 'rules', 'success', 'maybe', 70, '{}'::jsonb, '{"mode":"automatic"}'::jsonb, now())
       `,
       [priorityJobId, endpointId, reviewedJobId],
@@ -1417,6 +1442,7 @@ describe('database migrations', () => {
     });
     expect(reviewsResponse.statusCode).toBe(200);
     expect(reviewsResponse.json().data).toHaveLength(2);
+    expect(JSON.stringify(reviewsResponse.json())).not.toContain('m11-broken-model');
     expect(reviewsResponse.json().data[0]).toMatchObject({
       decision: 'apply',
       isPriority: true,

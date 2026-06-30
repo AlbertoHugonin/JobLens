@@ -16,9 +16,9 @@ use crate::{
         queue::set_ai_review_cooldown,
         review::{
             NormalizedReview, ReviewExternalJob, ReviewField, ReviewJobContext,
-            ReviewOutputLanguage, build_review_prompt, diagnostic_review, hash_text,
-            normalize_review_fields, normalize_review_output, normalize_review_output_language,
-            review_fields_json, review_json_schema,
+            ReviewOutputLanguage, build_review_prompt, hash_text, normalize_review_fields,
+            normalize_review_output, normalize_review_output_language, review_fields_json,
+            review_json_schema,
         },
     },
     config::WorkerConfig,
@@ -52,6 +52,11 @@ struct AiReviewTarget {
 enum DescriptionRecoveryOutcome {
     Deferred,
     Ready,
+}
+
+struct ReviewedCompletion {
+    completion: AiCompletion,
+    review: NormalizedReview,
 }
 
 const DEFAULT_CANDIDATE_PROFILE: &str = "\
@@ -150,7 +155,7 @@ pub(crate) async fn run_ai_review_activity(
         return Ok(());
     }
 
-    let completion = match request_ai_review_with_retry(
+    let reviewed = match request_valid_ai_review_with_retry(
         pool,
         &activity.id,
         &target,
@@ -184,15 +189,14 @@ pub(crate) async fn run_ai_review_activity(
         return Ok(());
     }
 
-    let review = normalize_review_output(&completion.raw_output, &target.settings.review_fields);
     let review_id = insert_job_review(
         pool,
         &target,
         JobReviewInsert {
-            ai_metrics: completion.metrics,
+            ai_metrics: reviewed.completion.metrics,
             profile_hash: &profile_hash,
-            raw_output: Some(&completion.raw_output),
-            review: &review,
+            raw_output: Some(&reviewed.completion.raw_output),
+            review: &reviewed.review,
             rules_hash: &rules_hash,
             source_activity_id: &activity.id,
         },
@@ -218,12 +222,12 @@ pub(crate) async fn run_ai_review_activity(
         "info",
         "Stored AI review",
         json!({
-            "decision": review.decision,
+            "decision": reviewed.review.decision,
             "jobId": target.job.id,
             "modelName": target.model_name,
             "reviewId": review_id,
-            "score": review.score,
-            "status": review.status,
+            "score": reviewed.review.score,
+            "status": reviewed.review.status,
         }),
     )
     .await?;
@@ -239,8 +243,7 @@ pub(crate) async fn run_ai_review_activity(
 ///   without counting it as an attempt — the queue waits for the endpoint to
 ///   return and resumes automatically.
 /// - other failures: re-queue (also behind a cooldown) up to a capped number of
-///   attempts; once exhausted, store a diagnostic review and mark the activity
-///   failed so it stops cycling.
+///   attempts; once exhausted, mark the activity failed so it stops cycling.
 async fn handle_failed_review(
     pool: &PgPool,
     config: &WorkerConfig,
@@ -309,38 +312,15 @@ async fn handle_failed_review(
         return Ok(());
     }
 
-    // Out of attempts: keep a diagnostic record and stop cycling.
-    let review = diagnostic_review(&message);
-    let review_id = insert_job_review(
-        pool,
-        target,
-        JobReviewInsert {
-            ai_metrics: json!({ "attempts": attempts, "requestFailed": true }),
-            profile_hash: &hash_text(&target.settings.candidate_profile),
-            raw_output: None,
-            review: &review,
-            rules_hash: &hash_text(
-                &json!({
-                    "evaluationRules": target.settings.evaluation_rules,
-                    "outputLanguage": target.settings.output_language.as_key(),
-                    "reviewFields": review_fields_json(&target.settings.review_fields),
-                })
-                .to_string(),
-            ),
-            source_activity_id: &activity.id,
-        },
-    )
-    .await?;
     insert_activity_log(
         pool,
         &activity.id,
         "error",
-        "AI review failed after retries; stored diagnostic review",
+        "AI review failed after retries; no review stored",
         json!({
             "attempts": attempts,
             "error": message,
             "jobId": target.job.id,
-            "reviewId": review_id,
         }),
     )
     .await?;
@@ -852,7 +832,7 @@ async fn defer_ai_review_for_description(
     Ok(())
 }
 
-async fn request_ai_review_with_retry(
+async fn request_valid_ai_review_with_retry(
     pool: &PgPool,
     activity_id: &str,
     target: &AiReviewTarget,
@@ -860,7 +840,7 @@ async fn request_ai_review_with_retry(
     runtime: &AiRuntime,
     response_schema: &Value,
     payload: &Value,
-) -> Result<AiCompletion, AiRequestError> {
+) -> Result<ReviewedCompletion, AiRequestError> {
     let max_attempts = runtime.retry_attempts.saturating_add(1).max(1);
     let mut last_error: Option<AiRequestError> = None;
 
@@ -881,6 +861,41 @@ async fn request_ai_review_with_retry(
 
         match completion {
             Ok(mut completion) => {
+                let review =
+                    normalize_review_output(&completion.raw_output, &target.settings.review_fields);
+                if review.status != "success" {
+                    let retryable = attempt < max_attempts;
+                    let message = review
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "AI response could not be normalized".to_string());
+                    insert_activity_log(
+                        pool,
+                        activity_id,
+                        if retryable { "warn" } else { "error" },
+                        if retryable {
+                            "AI review output was invalid, retrying"
+                        } else {
+                            "AI review output was invalid"
+                        },
+                        json!({
+                            "attempt": attempt,
+                            "error": &message,
+                            "jobId": target.job.id,
+                            "maxAttempts": max_attempts,
+                            "rawOutputSnippet": log_snippet(&completion.raw_output, 2_000),
+                            "retryDelaySeconds": runtime.retry_delay_seconds,
+                        }),
+                    )
+                    .await?;
+                    last_error = Some(AiRequestError::Failed(anyhow!(message)));
+
+                    if retryable && runtime.retry_delay_seconds > 0 {
+                        sleep(Duration::from_secs(runtime.retry_delay_seconds)).await;
+                    }
+                    continue;
+                }
+
                 if max_attempts > 1 {
                     if let Value::Object(metrics) = &mut completion.metrics {
                         metrics.insert("retryAttempt".to_string(), json!(attempt));
@@ -897,7 +912,7 @@ async fn request_ai_review_with_retry(
                         });
                     }
                 }
-                return Ok(completion);
+                return Ok(ReviewedCompletion { completion, review });
             }
             Err(error) => {
                 let retryable = attempt < max_attempts;
@@ -931,13 +946,27 @@ async fn request_ai_review_with_retry(
     Err(last_error.unwrap_or_else(|| AiRequestError::Failed(anyhow!("AI review request failed"))))
 }
 
+fn log_snippet(value: &str, max_chars: usize) -> String {
+    let mut snippet = String::new();
+    for (index, character) in value.chars().enumerate() {
+        if index >= max_chars {
+            snippet.push_str("... [truncated]");
+            return snippet;
+        }
+        snippet.push(character);
+    }
+    snippet
+}
+
 pub(crate) fn read_fixture_completion(
     payload: &Value,
     attempt: u64,
 ) -> Option<Result<AiCompletion>> {
-    let fixture = payload
-        .get("fixtureAiOutput")
-        .or_else(|| payload.get("fixture_ai_output"))?;
+    let previous_activity_attempts = payload
+        .get("aiReviewAttempts")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let logical_attempt = previous_activity_attempts.saturating_add(attempt).max(1);
     let failures_before_success = payload
         .get("fixtureAiFailuresBeforeSuccess")
         .or_else(|| payload.get("fixture_ai_failures_before_success"))
@@ -948,9 +977,23 @@ pub(crate) fn read_fixture_completion(
         })
         .unwrap_or(0);
 
-    if attempt <= failures_before_success {
+    if logical_attempt <= failures_before_success {
         return Some(Err(anyhow!("fixture AI failure before success")));
     }
+
+    let fixture = payload
+        .get("fixtureAiOutputs")
+        .or_else(|| payload.get("fixture_ai_outputs"))
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            let index = usize::try_from(logical_attempt.saturating_sub(1)).ok()?;
+            items.get(index).or_else(|| items.last())
+        })
+        .or_else(|| {
+            payload
+                .get("fixtureAiOutput")
+                .or_else(|| payload.get("fixture_ai_output"))
+        })?;
 
     let raw_output = fixture
         .as_str()

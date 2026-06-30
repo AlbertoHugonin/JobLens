@@ -87,8 +87,34 @@ pub(crate) async fn run_collect_activity(
             }
         };
 
-        insert_raw_payload(pool, &search.provider_id, &activity.id, &page).await?;
-        stats.raw_payloads += 1;
+        if let Err(error) = insert_raw_payload(pool, &search.provider_id, &activity.id, &page).await
+        {
+            insert_activity_log(
+                pool,
+                &activity.id,
+                "warn",
+                "Skipped LinkedIn raw payload storage",
+                json!({
+                    "contentType": &page.content_type,
+                    "elapsedMs": &page.elapsed_ms,
+                    "error": format!("{error:#}"),
+                    "payloadKind": if page.payload.is_some() {
+                        "json"
+                    } else if page.payload_text.is_some() {
+                        "text"
+                    } else {
+                        "empty"
+                    },
+                    "requestParams": &page.request_params,
+                    "requestUrl": &page.request_url,
+                    "responseStatus": &page.response_status,
+                    "start": start,
+                }),
+            )
+            .await?;
+        } else {
+            stats.raw_payloads += 1;
+        }
 
         if !page
             .response_status

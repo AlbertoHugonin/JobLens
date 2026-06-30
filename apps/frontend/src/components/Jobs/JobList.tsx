@@ -136,24 +136,26 @@ export function JobList({
                 <Stack direction="horizontal" className="align-items-center gap-3">
                   <div className="min-w-0 flex-grow-1">
                     <div className="job-list-title fw-semibold" title={job.title}>
-                      <span>{job.title}</span>
-                      {workplaceLabel ? (
-                        <Badge
-                          bg="light"
-                          className="job-list-workplace-badge"
-                          text="dark"
-                          title={`Modalita: ${workplaceLabel}`}
-                        >
-                          {workplaceLabel}
-                        </Badge>
-                      ) : null}
+                      {job.title}
                     </div>
                     <div className="job-list-meta small text-secondary">
                       <span className="job-list-company text-truncate" title={job.companyName}>
                         {job.companyName}
                       </span>
-                      <span className="job-list-location text-truncate" title={locationLabel}>
-                        {locationLabel}
+                      <span className="job-list-place">
+                        <span className="job-list-location text-truncate" title={locationLabel}>
+                          {locationLabel}
+                        </span>
+                        {workplaceLabel ? (
+                          <Badge
+                            bg="light"
+                            className="job-list-workplace-badge"
+                            text="dark"
+                            title={`Modalita: ${workplaceLabel}`}
+                          >
+                            {workplaceLabel}
+                          </Badge>
+                        ) : null}
                       </span>
                     </div>
                   </div>
