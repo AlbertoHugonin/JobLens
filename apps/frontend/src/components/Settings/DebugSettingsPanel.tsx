@@ -8,10 +8,16 @@ import Modal from 'react-bootstrap/Modal';
 import Spinner from 'react-bootstrap/Spinner';
 import Stack from 'react-bootstrap/Stack';
 
-import { resetApplicationData, type ApplicationResetDto } from '../../API/maintenance';
+import {
+  clearOperationalData,
+  resetApplicationData,
+  type ApplicationResetDto,
+  type OperationalClearDto,
+} from '../../API/maintenance';
 import { useDebugMode } from '../../contexts/DebugModeContext';
 
 const RESET_CONFIRMATION = 'RESET';
+const CLEAR_CONFIRMATION = 'CLEAR';
 
 function readErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Errore imprevisto';
@@ -24,6 +30,34 @@ export function DebugSettingsPanel() {
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetResult, setResetResult] = useState<ApplicationResetDto | null>(null);
+  const [showClear, setShowClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [clearResult, setClearResult] = useState<OperationalClearDto | null>(null);
+
+  const closeClear = () => {
+    if (clearing) {
+      return;
+    }
+
+    setShowClear(false);
+    setClearError(null);
+  };
+
+  const handleClear = async () => {
+    setClearing(true);
+    try {
+      const response = await clearOperationalData({ confirmation: CLEAR_CONFIRMATION });
+      setClearResult(response.data);
+      setClearError(null);
+      setShowClear(false);
+      setTimeout(() => window.location.reload(), 900);
+    } catch (error: unknown) {
+      setClearError(readErrorMessage(error));
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const closeReset = () => {
     if (resetting) {
@@ -80,6 +114,40 @@ export function DebugSettingsPanel() {
               Ricarico l&apos;applicazione...
             </Alert>
           ) : null}
+          {clearResult ? (
+            <Alert className="mb-0" variant="success">
+              Dati operativi svuotati:{' '}
+              {Object.values(clearResult.deleted).reduce((total, count) => total + count, 0)}{' '}
+              record. Ricarico l&apos;applicazione...
+            </Alert>
+          ) : null}
+          <div className="border-top pt-3">
+            <div className="fw-semibold">Svuota attivita e offerte</div>
+            <p className="text-secondary small mb-3">
+              Elimina tutte le offerte e le attivita (con log, descrizioni, review e raw payload),
+              mantenendo impostazioni, ricerche, sessioni provider ed endpoint AI. Utile per
+              ripartire con le raccolte da zero senza riconfigurare nulla.
+            </p>
+            <Button
+              disabled={!debugMode || clearing}
+              onClick={() => setShowClear(true)}
+              variant="outline-warning"
+            >
+              {clearing ? (
+                <>
+                  <Spinner animation="border" className="me-2" size="sm" />
+                  Svuotamento in corso
+                </>
+              ) : (
+                'Svuota attivita e offerte'
+              )}
+            </Button>
+            {!debugMode ? (
+              <div className="small text-secondary mt-2">
+                Attiva gli strumenti di debug per usare questa azione.
+              </div>
+            ) : null}
+          </div>
           <div className="border-top pt-3">
             <div className="fw-semibold text-danger">Reset applicazione</div>
             <p className="text-secondary small mb-3">
@@ -109,6 +177,33 @@ export function DebugSettingsPanel() {
           </div>
         </Stack>
       </Card.Body>
+      <Modal centered onHide={closeClear} show={showClear}>
+        <Modal.Header closeButton={!clearing}>
+          <Modal.Title className="h5">Svuota attivita e offerte</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Stack className="gap-3">
+            <Alert className="mb-0" variant="warning">
+              Verranno eliminate tutte le offerte e le attivita (con i dati collegati).
+              Impostazioni, ricerche, sessioni ed endpoint AI restano. L&apos;operazione non puo
+              essere annullata.
+            </Alert>
+            {clearError ? (
+              <Alert className="mb-0" variant="danger">
+                {clearError}
+              </Alert>
+            ) : null}
+          </Stack>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button disabled={clearing} onClick={closeClear} variant="outline-secondary">
+            Annulla
+          </Button>
+          <Button disabled={clearing} onClick={() => void handleClear()} variant="warning">
+            {clearing ? 'Svuotamento in corso' : 'Svuota'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
       <Modal centered onHide={closeReset} show={showReset}>
         <Modal.Header closeButton={!resetting}>
           <Modal.Title className="h5">Reset applicazione</Modal.Title>

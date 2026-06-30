@@ -24,6 +24,11 @@ export interface ApplicationResetRecord {
   };
 }
 
+export interface OperationalClearRecord {
+  clearedAt: string;
+  deleted: Record<string, number>;
+}
+
 interface ModelMetricsRow {
   avg_duration_ms: string | null;
   avg_output_tokens: string | null;
@@ -138,6 +143,61 @@ export async function listBenchmarkJobIds(pool: DatabasePool): Promise<string[]>
   );
 
   return result.rows.map((row) => row.id);
+}
+
+/**
+ * Clear operational data — every collected offer and queued/finished activity,
+ * plus their dependents — while keeping configuration: settings, searches,
+ * providers, provider sessions and AI endpoints/models. Lets the user restart
+ * collections from scratch without reconfiguring the app.
+ */
+export async function clearOperationalData(pool: DatabasePool): Promise<OperationalClearRecord> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const counts = await client.query<{ deleted: unknown }>(`
+      SELECT jsonb_build_object(
+        'activities', (SELECT COUNT(*) FROM activities),
+        'activityLogs', (SELECT COUNT(*) FROM activity_logs),
+        'externalJobs', (SELECT COUNT(*) FROM external_jobs),
+        'jobDescriptions', (SELECT COUNT(*) FROM job_descriptions),
+        'jobReviews', (SELECT COUNT(*) FROM job_reviews),
+        'jobSearchPresence', (SELECT COUNT(*) FROM job_search_presence),
+        'jobs', (SELECT COUNT(*) FROM jobs),
+        'rawPayloads', (SELECT COUNT(*) FROM raw_payloads)
+      ) AS deleted
+    `);
+
+    // Only operational tables. None of the kept tables (settings, searches,
+    // providers, provider_sessions, ai_endpoints, ai_models) reference these,
+    // so CASCADE cannot reach them.
+    await client.query(`
+      TRUNCATE TABLE
+        activity_logs,
+        raw_payloads,
+        job_reviews,
+        job_descriptions,
+        job_search_presence,
+        external_jobs,
+        jobs,
+        activities
+      RESTART IDENTITY CASCADE
+    `);
+
+    await client.query('COMMIT');
+
+    return {
+      clearedAt: new Date().toISOString(),
+      deleted: normalizeDeletedCounts(counts.rows[0]?.deleted),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function resetApplicationData(pool: DatabasePool): Promise<ApplicationResetRecord> {
