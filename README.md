@@ -29,6 +29,9 @@ other sources can be added later.
   rest of the app.
 - **Visible background work** — collections, AI reviews, and exports run as
   tracked "activities" with live progress, logs, and cancel/retry controls.
+- **Portable debug/export data** — single-offer exports include provider/search
+  metadata, the latest description, and full AI review details (`result`,
+  `metrics`, `rawOutput`) without provider secrets.
 
 ## How it works
 

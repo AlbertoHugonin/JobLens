@@ -96,6 +96,14 @@ offline.
 - `POST /api/v1/ai/models/install`
 - `DELETE /api/v1/ai/models/:id`
 
+`GET /api/v1/ai/settings` returns the current AI behavior contract:
+`candidateProfile`, `evaluationRules`, `outputLanguage`, `reviewFields`,
+`runtime`, `pauses`, active endpoint information, and the default rules template.
+`PATCH /api/v1/ai/settings` accepts partial updates for those same editable
+settings. `outputLanguage` is one of `en`, `it`, `job_language`, or
+`profile_language`; every `reviewFields` item defines a string-array evidence
+field with `{ key, label, description, enabled, maxItems }`.
+
 ## AI review, benchmark & maintenance
 
 - `GET /api/v1/ai/models/metrics`

@@ -84,9 +84,11 @@ prodotto.
 
 La valutazione AI deve separare:
 
-- contratto JSON fisso;
+- contratto JSON core fisso;
+- campi evidenza configurabili;
 - profilo candidato modificabile;
 - regole di valutazione modificabili;
+- lingua output configurabile;
 - endpoint e modello selezionati.
 
 Le regole su cosa inserire nei campi AI devono stare nelle **Regole di
