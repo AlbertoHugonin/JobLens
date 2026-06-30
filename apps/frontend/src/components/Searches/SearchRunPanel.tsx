@@ -64,6 +64,7 @@ function formatTimestamp(value: Date): string {
 
 export function SearchRunPanel({
   canRunAll,
+  hasActiveSession,
   notice,
   onRunAll,
   onRun,
@@ -73,6 +74,7 @@ export function SearchRunPanel({
   search,
 }: {
   canRunAll: boolean;
+  hasActiveSession: boolean;
   notice: string | null;
   onRunAll: () => void;
   onRun: (id: string) => void;
@@ -104,9 +106,15 @@ export function SearchRunPanel({
               {notice}
             </Alert>
           ) : null}
+          {!hasActiveSession ? (
+            <Alert className="mb-0 py-2" variant="warning">
+              Nessuna sessione LinkedIn attiva: collega una sessione in Impostazioni per avviare la
+              raccolta.
+            </Alert>
+          ) : null}
           <Stack direction="horizontal" className="gap-2 flex-wrap">
             <Button
-              disabled={!search || running || hasActiveRun}
+              disabled={!search || running || hasActiveRun || !hasActiveSession}
               onClick={() => search && onRun(search.id)}
               variant="primary"
             >

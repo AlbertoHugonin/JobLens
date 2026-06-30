@@ -20,12 +20,24 @@ export interface AiPauseWindow {
   startTime: string;
 }
 
+export type AiReviewOutputLanguage = 'en' | 'it' | 'job_language' | 'profile_language';
+
+export interface AiReviewField {
+  description: string;
+  enabled: boolean;
+  key: string;
+  label: string;
+  maxItems: number;
+}
+
 export interface AiSettings {
   activeEndpointId: string | null;
   candidateProfile: string;
   enabled: boolean;
   evaluationRules: string;
+  outputLanguage: AiReviewOutputLanguage;
   pauses: AiPauseWindow[];
+  reviewFields: AiReviewField[];
   rulesTemplate: string;
   rulesTemplateVersion: number;
   runtime: AiRuntimeSettings;
@@ -77,6 +89,57 @@ export const aiPauseDayOptions: Array<{ label: string; value: number }> = [
   { label: 'Venerdi', value: 5 },
   { label: 'Sabato', value: 6 },
 ];
+
+export const aiReviewOutputLanguageOptions: Array<{
+  label: string;
+  value: AiReviewOutputLanguage;
+}> = [
+  { label: 'Italiano', value: 'it' },
+  { label: 'English', value: 'en' },
+  { label: "Lingua dell'offerta", value: 'job_language' },
+  { label: 'Lingua del profilo', value: 'profile_language' },
+];
+
+export const defaultAiReviewFields: AiReviewField[] = [
+  {
+    description: 'Only true deal-breakers.',
+    enabled: true,
+    key: 'blockers',
+    label: 'Bloccanti',
+    maxItems: 3,
+  },
+  {
+    description: 'Direct matches between the candidate profile and the offer.',
+    enabled: true,
+    key: 'matching_points',
+    label: 'Punti di match',
+    maxItems: 3,
+  },
+  {
+    description:
+      'Optional or preferred items explicitly mentioned in the offer and present in the profile.',
+    enabled: true,
+    key: 'explicit_optional_matches',
+    label: 'Match opzionali',
+    maxItems: 3,
+  },
+  {
+    description: 'Only missing mandatory or core requirements.',
+    enabled: true,
+    key: 'mandatory_gaps',
+    label: 'Gap obbligatori',
+    maxItems: 3,
+  },
+  {
+    description: 'Real but non-blocking concerns, weak evidence or partial fit.',
+    enabled: true,
+    key: 'caution_notes',
+    label: 'Note di attenzione',
+    maxItems: 3,
+  },
+];
+
+export const defaultAiReviewFieldKeys = new Set(defaultAiReviewFields.map((field) => field.key));
 
 export function getAiPauseDayLabel(dayOfWeek: number): string {
   return aiPauseDayOptions.find((option) => option.value === dayOfWeek)?.label ?? String(dayOfWeek);

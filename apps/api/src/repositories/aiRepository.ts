@@ -43,12 +43,24 @@ export interface AiPauseWindow {
   startTime: string;
 }
 
+export type AiReviewOutputLanguage = 'en' | 'it' | 'job_language' | 'profile_language';
+
+export interface AiReviewField {
+  description: string;
+  enabled: boolean;
+  key: string;
+  label: string;
+  maxItems: number;
+}
+
 export interface AiSettingsRecord {
   activeEndpointId: string | null;
   candidateProfile: string;
   enabled: boolean;
   evaluationRules: string;
+  outputLanguage: AiReviewOutputLanguage;
   pauses: AiPauseWindow[];
+  reviewFields: AiReviewField[];
   rulesTemplate: string;
   rulesTemplateVersion: number;
   runtime: AiRuntimeSettings;
@@ -90,18 +102,32 @@ const DEFAULT_CANDIDATE_PROFILE = [
 ].join('\n');
 
 export const DEFAULT_EVALUATION_RULES = [
-  'Decisione:',
-  '- apply: forte corrispondenza con ruolo, competenze e vincoli.',
-  '- maybe: potenziale interessante con gap o informazioni mancanti.',
-  '- reject: incompatibilita chiara o blocker sostanziali.',
+  'Decision:',
+  '- apply: strong match with the role, required skills, constraints and candidate goals.',
+  '- maybe: potentially interesting role with manageable gaps or missing information.',
+  '- reject: clear mismatch, hard constraint conflict or substantial blockers.',
   '',
   'Score:',
-  '- 80-100 per match forte e pochi rischi.',
-  '- 50-79 per match parziale o incertezza gestibile.',
-  '- 0-49 per fit debole o blocker.',
+  '- 80-100 for a strong fit with few risks.',
+  '- 50-79 for a partial fit or manageable uncertainty.',
+  '- 0-49 for weak fit, hard blockers or major missing requirements.',
   '',
-  "Compila blocker, matching_points, optional matches, mandatory_gaps e caution_notes con esempi concreti dall'offerta.",
+  'Requirement handling:',
+  '- First distinguish mandatory/core requirements from preferred/optional requirements and learnable/training-only items.',
+  '- Treat phrases such as preferred, plus, nice to have, bonus, helpful, useful or good to have as optional unless the offer clearly marks them as mandatory.',
+  '- Do not turn optional, preferred or learnable items into blockers or mandatory_gaps.',
+  '',
+  'Field rules:',
+  '- blockers: only true deal-breakers.',
+  '- mandatory_gaps: only missing mandatory/core requirements.',
+  '- caution_notes: real but non-blocking concerns, weak evidence or partial fit.',
+  '- matching_points: direct matches between the candidate profile and the offer.',
+  '- explicit_optional_matches: optional/preferred items explicitly mentioned in the offer and present in the profile.',
+  '- Do not invent candidate skills or experience. If a skill is only basic or academic, say so.',
+  '- Fill blockers, matching_points, explicit_optional_matches, mandatory_gaps and caution_notes with concrete evidence from the offer.',
 ].join('\n');
+
+const DEFAULT_EVALUATION_RULES_TEMPLATE_VERSION = 1;
 
 const DEFAULT_RUNTIME: AiRuntimeSettings = {
   keepAlive: '10m',
@@ -117,6 +143,62 @@ const DEFAULT_RUNTIME: AiRuntimeSettings = {
 };
 
 const DEFAULT_PAUSES: AiPauseWindow[] = [];
+const DEFAULT_REVIEW_OUTPUT_LANGUAGE: AiReviewOutputLanguage = 'it';
+export const DEFAULT_REVIEW_FIELDS: AiReviewField[] = [
+  {
+    description: 'Only true deal-breakers.',
+    enabled: true,
+    key: 'blockers',
+    label: 'Bloccanti',
+    maxItems: 3,
+  },
+  {
+    description: 'Direct matches between the candidate profile and the offer.',
+    enabled: true,
+    key: 'matching_points',
+    label: 'Punti di match',
+    maxItems: 3,
+  },
+  {
+    description:
+      'Optional or preferred items explicitly mentioned in the offer and present in the profile.',
+    enabled: true,
+    key: 'explicit_optional_matches',
+    label: 'Match opzionali',
+    maxItems: 3,
+  },
+  {
+    description: 'Only missing mandatory or core requirements.',
+    enabled: true,
+    key: 'mandatory_gaps',
+    label: 'Gap obbligatori',
+    maxItems: 3,
+  },
+  {
+    description: 'Real but non-blocking concerns, weak evidence or partial fit.',
+    enabled: true,
+    key: 'caution_notes',
+    label: 'Note di attenzione',
+    maxItems: 3,
+  },
+];
+const REVIEW_OUTPUT_LANGUAGE_VALUES = new Set<AiReviewOutputLanguage>([
+  'en',
+  'it',
+  'job_language',
+  'profile_language',
+]);
+const RESERVED_REVIEW_FIELD_KEYS = new Set([
+  'decision',
+  'diagnostic',
+  'location_fit',
+  'missing_skills',
+  'optional_strengths',
+  'reason',
+  'score',
+  'seniority_fit',
+  'skill_fit',
+]);
 
 function mapEndpoint(row: AiEndpointRow): AiEndpointRecord {
   return {
@@ -159,6 +241,75 @@ function readNumber(value: unknown, fallback: number): number {
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+function normalizeReviewOutputLanguage(value: unknown): AiReviewOutputLanguage {
+  return typeof value === 'string' &&
+    REVIEW_OUTPUT_LANGUAGE_VALUES.has(value as AiReviewOutputLanguage)
+    ? (value as AiReviewOutputLanguage)
+    : DEFAULT_REVIEW_OUTPUT_LANGUAGE;
+}
+
+function normalizeReviewFieldKey(value: unknown): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+}
+
+function humanizeReviewFieldKey(key: string): string {
+  return key
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function cloneDefaultReviewFields(): AiReviewField[] {
+  return DEFAULT_REVIEW_FIELDS.map((field) => ({ ...field }));
+}
+
+function normalizeReviewFields(value: unknown): AiReviewField[] {
+  if (!Array.isArray(value)) {
+    return cloneDefaultReviewFields();
+  }
+
+  const seen = new Set<string>();
+  const fields: AiReviewField[] = [];
+
+  for (const item of value) {
+    if (!isRecord(item)) {
+      continue;
+    }
+
+    const key = normalizeReviewFieldKey(item.key);
+    if (
+      !key ||
+      key.length < 2 ||
+      !/^[a-z][a-z0-9_]*$/.test(key) ||
+      RESERVED_REVIEW_FIELD_KEYS.has(key) ||
+      seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+    fields.push({
+      description: readString(item.description, '').trim().slice(0, 500),
+      enabled: readBoolean(item.enabled, true),
+      key,
+      label: readString(item.label, '').trim().slice(0, 80) || humanizeReviewFieldKey(key),
+      maxItems: Math.max(1, Math.min(10, Math.round(readNumber(item.maxItems, 3)))),
+    });
+  }
+
+  return fields.length > 0 ? fields : cloneDefaultReviewFields();
 }
 
 function normalizeRuntime(value: unknown): AiRuntimeSettings {
@@ -244,16 +395,20 @@ export async function readAiSettings(pool: DatabasePool): Promise<AiSettingsReco
     activeEndpoint,
     candidateProfile,
     evaluationRules,
+    outputLanguage,
     runtime,
     pauses,
+    reviewFields,
     templateVersion,
   ] = await Promise.all([
     readSetting(pool, 'ai.enabled'),
     readSetting(pool, 'ai.active_endpoint_id'),
     readSetting(pool, 'ai.candidate_profile'),
     readSetting(pool, 'evaluation.rules'),
+    readSetting(pool, 'ai.review_output_language'),
     readSetting(pool, 'ai.runtime'),
     readSetting(pool, 'ai.pauses'),
+    readSetting(pool, 'ai.review_fields'),
     readSetting(pool, 'evaluation.rules.template_version'),
   ]);
   const updatedAt = [
@@ -261,8 +416,10 @@ export async function readAiSettings(pool: DatabasePool): Promise<AiSettingsReco
     activeEndpoint,
     candidateProfile,
     evaluationRules,
+    outputLanguage,
     runtime,
     pauses,
+    reviewFields,
     templateVersion,
   ]
     .filter(Boolean)
@@ -277,9 +434,13 @@ export async function readAiSettings(pool: DatabasePool): Promise<AiSettingsReco
     candidateProfile: readString(candidateProfile?.value, DEFAULT_CANDIDATE_PROFILE),
     enabled: readBoolean(enabled?.value, false),
     evaluationRules: readString(evaluationRules?.value, DEFAULT_EVALUATION_RULES),
+    outputLanguage: normalizeReviewOutputLanguage(outputLanguage?.value),
     pauses: normalizePauses(pauses?.value),
+    reviewFields: normalizeReviewFields(reviewFields?.value),
     rulesTemplate: DEFAULT_EVALUATION_RULES,
-    rulesTemplateVersion: Math.round(readNumber(templateVersion?.value, 1)),
+    rulesTemplateVersion: Math.round(
+      readNumber(templateVersion?.value, DEFAULT_EVALUATION_RULES_TEMPLATE_VERSION),
+    ),
     runtime: normalizeRuntime(runtime?.value),
     updatedAt: new Date(updatedAt ?? Date.now()).toISOString(),
   };
@@ -291,7 +452,9 @@ export async function updateAiSettings(
     candidateProfile?: string | undefined;
     enabled?: boolean | undefined;
     evaluationRules?: string | undefined;
+    outputLanguage?: string | undefined;
     pauses?: AiPauseWindow[] | undefined;
+    reviewFields?: unknown | undefined;
     runtime?: unknown | undefined;
   },
 ): Promise<AiSettingsRecord> {
@@ -314,6 +477,22 @@ export async function updateAiSettings(
       'evaluation.rules',
       input.evaluationRules,
       'Active evaluation rules used for future AI reviews.',
+    );
+  }
+  if (input.outputLanguage !== undefined) {
+    await upsertSetting(
+      pool,
+      'ai.review_output_language',
+      normalizeReviewOutputLanguage(input.outputLanguage),
+      'Language used for future AI review free-text output.',
+    );
+  }
+  if (input.reviewFields !== undefined) {
+    await upsertSetting(
+      pool,
+      'ai.review_fields',
+      normalizeReviewFields(input.reviewFields),
+      'Configurable evidence fields used for future AI reviews.',
     );
   }
   if (input.runtime !== undefined) {

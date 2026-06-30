@@ -111,6 +111,23 @@ describe('jobService', () => {
       },
       latestDescription: detailDto.description,
       latestReview: detailDto.latestReview,
+      reviews: [
+        {
+          ...detailDto.latestReview!,
+          endpointId: 'endpoint-1',
+          endpointName: ' Ollama ',
+          error: null,
+          metrics: { eval_count: 204 },
+          modelId: 'model-1',
+          profileHash: 'profile-hash',
+          rawOutput: '{"decision":"apply"}',
+          result: {
+            matching_points: ['Remote role'],
+            reason: 'Strong fit',
+          },
+          rulesHash: 'rules-hash',
+        },
+      ],
       searches: detailDto.searches,
     };
 
@@ -126,6 +143,15 @@ describe('jobService', () => {
     expect(exported.job).toEqual({
       id: 'job-1',
       title: ' Frontend Engineer ',
+    });
+    expect(exported.reviews[0]).toMatchObject({
+      endpointName: 'Ollama',
+      metrics: { eval_count: 204 },
+      rawOutput: '{"decision":"apply"}',
+      result: {
+        matching_points: ['Remote role'],
+        reason: 'Strong fit',
+      },
     });
     expect(JSON.stringify(exported)).not.toContain('rawCard');
   });

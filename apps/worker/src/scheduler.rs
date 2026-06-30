@@ -113,6 +113,16 @@ async fn read_schedulable_searches(pool: &PgPool) -> Result<Vec<ScheduledSearchR
             WHERE providers.provider_key = 'linkedin'
               AND providers.enabled = true
               AND searches.enabled = true
+              -- Never schedule collections for a provider without an active
+              -- session: they can only fail, and because a failed run never
+              -- advances last_run_at the search would stay perpetually "due",
+              -- spawning an unbounded stream of failing jobs.
+              AND EXISTS (
+                SELECT 1
+                FROM provider_sessions
+                WHERE provider_sessions.provider_id = providers.id
+                  AND provider_sessions.status = 'active'
+              )
             ORDER BY searches.created_at ASC, searches.id ASC
             "#,
     )

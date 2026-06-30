@@ -1,7 +1,8 @@
-import { indeedProvider } from './indeed.js';
 import { linkedInProvider } from './linkedin.js';
 import { ProviderError, type ProviderPlugin } from './types.js';
 
+// Providers are pluggable (see docs/PROVIDERS.md). LinkedIn is the only one
+// implemented end-to-end today; register additional plugins here as they ship.
 const providers = new Map<string, ProviderPlugin>();
 
 function register(plugin: ProviderPlugin): void {
@@ -9,7 +10,6 @@ function register(plugin: ProviderPlugin): void {
 }
 
 register(linkedInProvider);
-register(indeedProvider);
 
 export function getProvider(key: string): ProviderPlugin | undefined {
   return providers.get(key);

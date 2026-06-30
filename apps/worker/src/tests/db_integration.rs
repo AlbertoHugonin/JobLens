@@ -655,6 +655,17 @@ async fn insert_due_scheduled_search(pool: &PgPool) -> Result<String> {
     .fetch_one(pool)
     .await?;
     let provider_id: String = provider.try_get("id")?;
+    // The scheduler only enqueues collections for providers that have an active
+    // session, so a due search needs one to be picked up.
+    sqlx::query(
+        r#"
+            INSERT INTO provider_sessions(provider_id, label, status)
+            VALUES ($1::uuid, 'Scheduler test session', 'active')
+            "#,
+    )
+    .bind(&provider_id)
+    .execute(pool)
+    .await?;
     let search = sqlx::query(
         r#"
             INSERT INTO searches(provider_id, name, query, enabled, schedule_config, last_run_at)

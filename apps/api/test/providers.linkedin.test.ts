@@ -114,9 +114,8 @@ describe('provider registry', () => {
     expect(plugin?.credentialFields.map((field) => field.name)).toContain('jsessionid');
   });
 
-  it('registers additional providers (indeed) to prove modularity', () => {
-    expect(listProviders().map((plugin) => plugin.key)).toEqual(
-      expect.arrayContaining(['linkedin', 'indeed']),
-    );
+  it('only registers providers implemented end-to-end', () => {
+    expect(listProviders().map((plugin) => plugin.key)).toEqual(['linkedin']);
+    expect(getProvider('indeed')).toBeUndefined();
   });
 });

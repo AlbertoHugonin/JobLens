@@ -57,3 +57,13 @@ export function verifyProviderSession(
     { method: 'POST' },
   );
 }
+
+export function deleteProviderSession(
+  providerKey: string,
+  sessionId: string,
+): Promise<ApiSuccessDto<{ deleted: boolean }>> {
+  return apiRequest<ApiSuccessDto<{ deleted: boolean }>>(
+    `/api/v1/providers/${providerKey}/sessions/${sessionId}`,
+    { method: 'DELETE' },
+  );
+}

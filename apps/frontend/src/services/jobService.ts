@@ -166,6 +166,7 @@ export function normalizeJobExport(dto: JobExportDto): JobExport {
     job: dto.job,
     latestDescription: normalizeJobDescription(dto.latestDescription),
     latestReview: normalizeJobReview(dto.latestReview),
+    reviews: dto.reviews.map(normalizeJobReviewDetail),
     searches: dto.searches.map(normalizeJobSearchPresence),
   };
 }

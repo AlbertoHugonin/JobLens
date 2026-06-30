@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -13,6 +15,59 @@ struct PauseWindow {
 pub(crate) async fn is_ai_review_paused_now(pool: &PgPool, now: OffsetDateTime) -> Result<bool> {
     let pauses = read_ai_pauses(pool).await?;
     Ok(is_ai_paused(&pauses, now))
+}
+
+/// ai_review is not claimable while it is inside a configured pause window or
+/// within the failure cooldown set after an AI endpoint failure.
+pub(crate) async fn is_ai_review_blocked_now(pool: &PgPool, now: OffsetDateTime) -> Result<bool> {
+    if is_ai_review_paused_now(pool, now).await? {
+        return Ok(true);
+    }
+
+    Ok(read_ai_review_cooldown_until(pool)
+        .await?
+        .is_some_and(|until| now.unix_timestamp() < until))
+}
+
+async fn read_ai_review_cooldown_until(pool: &PgPool) -> Result<Option<i64>> {
+    let row = sqlx::query(
+        r#"
+        SELECT value
+        FROM settings
+        WHERE key = 'ai.review_cooldown_until'
+        "#,
+    )
+    .fetch_optional(pool)
+    .await
+    .context("read AI review cooldown failed")?;
+
+    Ok(row
+        .map(|row| row.try_get::<Value, _>("value"))
+        .transpose()?
+        .and_then(|value| value.as_i64()))
+}
+
+/// Pause ai_review claiming for `cooldown` from now (stored as epoch seconds).
+/// The window self-expires, so normal claiming resumes automatically.
+pub(crate) async fn set_ai_review_cooldown(pool: &PgPool, cooldown: Duration) -> Result<()> {
+    let until = OffsetDateTime::now_utc().unix_timestamp() + cooldown.as_secs() as i64;
+    sqlx::query(
+        r#"
+        INSERT INTO settings(key, value, description)
+        VALUES (
+          'ai.review_cooldown_until',
+          to_jsonb($1::bigint),
+          'Epoch seconds until which ai_review claiming is paused after an AI endpoint failure'
+        )
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        "#,
+    )
+    .bind(until)
+    .execute(pool)
+    .await
+    .context("set AI review cooldown failed")?;
+
+    Ok(())
 }
 
 pub(crate) fn is_ai_paused(pauses: &Value, now: OffsetDateTime) -> bool {

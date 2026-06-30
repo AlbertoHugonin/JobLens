@@ -1,7 +1,7 @@
 # JobLens - Requisiti del prodotto
 
 Versione documento: 1.0 draft
-Data: 25 giugno 2026
+Data: 29 giugno 2026
 Stato: specifica primaria di prodotto e architettura
 
 ## 1. Visione
@@ -14,8 +14,9 @@ UI, offerte, ricerche e AI.
 Stato provider attuale:
 
 - LinkedIn e l'unico provider operativo end-to-end.
-- Indeed esiste solo come skeleton tecnico per validare l'architettura plugin:
-  non ha seed DB, wizard ricerca, collector worker o normalizzazione offerte.
+- Indeed non e un provider operativo e oggi non e registrato nell'applicazione:
+  prima di abilitarlo servono plugin API, seed DB, wizard ricerca, collector
+  worker e normalizzazione offerte.
 
 Stack target:
 
@@ -397,7 +398,7 @@ offerte.
 ### 5.2 Ricerche
 
 - Creazione guidata da keyword, frase esatta, localita, distanza e livelli
-  esperienza.
+  esperienza, con filtro modalita lavoro LinkedIn quando disponibile.
 - Import e modifica di URL esistenti; se interpretabili, riaperti nel wizard
   precompilato.
 - URL completo sempre visibile.
@@ -443,7 +444,8 @@ offerte.
 - Impostazioni configurabili: modello valutazioni, modello prioritario,
   timeout, `num_ctx`, `num_predict`, `temperature`, `think`, `keep_alive`, retry
   e ritardo retry.
-- Profilo candidato e Regole di valutazione sono modificabili dalla UI.
+- Profilo candidato, lingua output review, campi evidenza e Regole di
+  valutazione sono modificabili dalla UI.
 - Le Regole di valutazione definiscono come interpretare decisione, score, fit,
   blocker, match, preferenziali espliciti, gap obbligatori, note e motivazione.
 - Le Regole di valutazione devono avere editor dedicato, salvataggio esplicito,
@@ -485,23 +487,27 @@ offerte.
 
 ## 6. Contratto JSON Review AI
 
-La struttura della risposta e fissa; il significato pratico di cosa inserire nei
-campi deriva dalle Regole di valutazione attive.
+La struttura core della risposta e fissa; i campi evidenza sono configurabili.
+Il significato pratico di cosa inserire nei campi deriva dalle Regole di
+valutazione attive e dalla descrizione dei campi evidenza configurati.
 
 Input minimo al modello:
 
 - profilo candidato;
 - regole di valutazione attive;
+- lingua output configurata;
+- campi evidenza configurati;
 - titolo, azienda, luogo, modalita di lavoro;
 - provider ed external ID;
 - descrizione testuale dell'offerta.
 
-Ogni review deve salvare hash o versione di profilo e regole.
+Ogni review deve salvare hash o versione di profilo, regole, lingua output e
+campi evidenza usati.
 
 La risposta deve essere un singolo oggetto JSON valido, senza markdown o testo
 extra. Quando supportato, la richiesta deve usare schema JSON strutturato.
 
-Formato canonico:
+Formato canonico default:
 
 ```json
 {
@@ -536,14 +542,12 @@ Campi:
 | `seniority_fit` | `good`, `borderline`, `bad`. |
 | `skill_fit` | `good`, `partial`, `bad`. |
 | `location_fit` | `good`, `partial`, `bad`, `unknown`. |
-| `blockers` | Max 3 stringhe; cosa e bloccante lo definiscono le regole. |
-| `matching_points` | Max 3 stringhe; match rilevanti secondo le regole. |
-| `explicit_optional_matches` | Max 3 stringhe; preferenziali espliciti secondo le regole. |
-| `mandatory_gaps` | Max 3 stringhe; gap obbligatori secondo le regole. |
-| `caution_notes` | Max 3 stringhe; cautele non bloccanti secondo le regole. |
+| campi evidenza | Array configurabili di stringhe brevi; default: `blockers`, `matching_points`, `explicit_optional_matches`, `mandatory_gaps`, `caution_notes`. |
 | `reason` | Una frase concreta, max 500 caratteri. |
 
-Le stringhe nelle liste devono restare brevi, idealmente sotto 220 caratteri.
+Le stringhe nelle liste evidenza devono restare brevi, idealmente sotto 220
+caratteri. La lingua dei campi testuali e configurabile; gli enum restano le
+keyword inglesi del contratto.
 
 Il prompt deve separare chiaramente contratto JSON, profilo e regole. I campi
 `missing_skills`, `optional_strengths` e alias simili non fanno parte del
@@ -555,8 +559,8 @@ runtime e metriche disponibili.
 
 ## 7. API Minime
 
-Questa sezione descrive il contratto API operativo attuale e le route ancora da
-implementare per chiudere il comportamento richiesto dal prodotto.
+Questa sezione descrive il contratto API operativo attuale esposto
+dall'applicazione.
 
 ### 7.1 Sistema e impostazioni base
 
@@ -576,7 +580,9 @@ implementare per chiudere il comportamento richiesto dal prodotto.
 - `PATCH /api/v1/jobs/:id/state`
 - `POST /api/v1/jobs/:id/reviews`
 - `POST /api/v1/jobs/batch-reviews`
-- `GET /api/v1/jobs/:id/export`
+- `GET /api/v1/jobs/:id/export` include metadati offerta/provider/ricerche,
+  descrizione piu recente, riepilogo review piu rilevante e storico review AI
+  completo con `result`, `metrics` e `rawOutput`.
 
 ### 7.3 Provider e sessioni
 
@@ -601,30 +607,22 @@ Note:
 - `GET /api/v1/searches/:id`
 - `PATCH /api/v1/searches/:id`
 - `DELETE /api/v1/searches/:id`
+- `POST /api/v1/searches/run`
 - `POST /api/v1/searches/:id/run`
 - `POST /api/v1/searches/preview-url`
 - `POST /api/v1/searches/import-url`
-
-Da implementare:
-
-- `POST /api/v1/searches/run` per avviare piu ricerche o tutte le ricerche
-  abilitate in una sola richiesta.
 
 ### 7.5 Attivita
 
 - `POST /api/v1/activities`
 - `GET /api/v1/activities`
+- `GET /api/v1/activities/summary`
+- `POST /api/v1/activities/cancel`
 - `GET /api/v1/activities/:id`
 - `GET /api/v1/activities/:id/logs`
+- `GET /api/v1/activities/:id/linkedin-debug`
 - `POST /api/v1/activities/:id/cancel`
 - `POST /api/v1/activities/:id/retry`
-
-Da implementare:
-
-- `GET /api/v1/activities/summary` con conteggi aggregati per stato/tipo e
-  attivita attive recenti.
-- `POST /api/v1/activities/cancel` per annullare la coda o un insieme filtrato
-  di attivita `queued`/`running`.
 
 ### 7.6 AI
 
@@ -635,9 +633,14 @@ Da implementare:
 - `POST /api/v1/ai/endpoints`
 - `PATCH /api/v1/ai/endpoints/:id`
 - `POST /api/v1/ai/endpoints/:id/activate`
+- `GET /api/v1/ai/endpoints/:id/health`
+- `POST /api/v1/ai/endpoints/probe`
+- `DELETE /api/v1/ai/endpoints/:id`
 - `GET /api/v1/ai/models`
 - `GET /api/v1/ai/models/metrics`
+- `POST /api/v1/ai/models/sync`
 - `POST /api/v1/ai/models/install`
+- `DELETE /api/v1/ai/models/:id`
 - `POST /api/v1/ai/benchmark`
 - `DELETE /api/v1/ai/reviews`
 
@@ -738,16 +741,21 @@ Copertura oggi presente:
   heartbeat e logica di base.
 - Integrazione DB worker con fixture per raccolta LinkedIn, descrizioni,
   availability, install modello, review AI, export e debug.
-- E2E Playwright per navigazione principale, layout mobile, wizard ricerca
-  LinkedIn, configurazione scheduler ricerca, filtri/dettaglio offerte,
-  history review AI con fixture, cancellazione attivita, export/debug artifact
-  e impostazioni AI.
+- E2E Playwright attivi per navigazione principale, layout mobile, wizard
+  ricerca LinkedIn, configurazione scheduler ricerca, filtri modalita lavoro e
+  dettaglio offerte.
+- E2E Playwright gia scritti ma marcati `fixme` per history review AI con
+  fixture, cancellazione attivita, export/debug artifact, debug raw LinkedIn e
+  impostazioni AI: richiedono harness isolato DB/AI prima di entrare nella suite
+  standard.
 - API/DB per attivita summary/cancel, run multiplo ricerche, history review e
   insight/ranking offerte.
 
 Test ancora da aggiungere:
 
 - E2E raccolta LinkedIn completa con fixture raw/HAR, senza chiamate live.
+- Harness e2e isolato o mock Ollama per riabilitare i test `activities`,
+  `ai-review` e `settings-ai` nella suite standard.
 - E2E retry di attivita fallita per un tipo supportato.
 - E2E mobile dei workflow desktop principali se il prodotto deve supportare
   operativita mobile completa.
@@ -780,5 +788,5 @@ JobLens e pronto quando:
 - LinkedIn e il primo provider operativo, non il dominio del prodotto.
 - Le nuove sessioni LinkedIn persistono solo `li_at` e `JSESSIONID`; cookie
   completi e HAR completi non fanno parte dello stato persistito.
-- Indeed resta uno skeleton tecnico finche non esistono seed DB, collector
+- Indeed resta non operativo finche non esistono plugin API, seed DB, collector
   worker, normalizzazione e UI di ricerca dedicata.

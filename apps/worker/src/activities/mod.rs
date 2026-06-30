@@ -69,7 +69,18 @@ pub(crate) async fn run_worker_loop(
                         error = %err,
                         "activity processing failed"
                     );
-                    mark_activity_failed(&pool, &config, &activity.id, &err.to_string()).await?;
+                    // A single activity failure (or failing to record it) must never
+                    // take down the loop: otherwise the HTTP/health server stays up and
+                    // the worker looks healthy while silently claiming nothing.
+                    if let Err(mark_err) =
+                        mark_activity_failed(&pool, &config, &activity.id, &err.to_string()).await
+                    {
+                        error!(
+                            activity_id = %activity.id,
+                            error = %mark_err,
+                            "could not mark activity as failed; continuing loop"
+                        );
+                    }
                 }
             }
             Ok(None) => {

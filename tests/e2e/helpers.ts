@@ -12,11 +12,19 @@ export interface AiStateSnapshot {
     candidateProfile: string;
     enabled: boolean;
     evaluationRules: string;
+    outputLanguage: 'en' | 'it' | 'job_language' | 'profile_language';
     pauses: Array<{
       dayOfWeek: number;
       enabled: boolean;
       endTime: string;
       startTime: string;
+    }>;
+    reviewFields: Array<{
+      description: string;
+      enabled: boolean;
+      key: string;
+      label: string;
+      maxItems: number;
     }>;
     runtime: {
       keepAlive: string;
@@ -92,7 +100,9 @@ export async function captureAiState(request: APIRequestContext): Promise<AiStat
       candidateProfile: settings.candidateProfile,
       enabled: settings.enabled,
       evaluationRules: settings.evaluationRules,
+      outputLanguage: settings.outputLanguage,
       pauses: settings.pauses,
+      reviewFields: settings.reviewFields,
       runtime: settings.runtime,
     },
   };
@@ -237,6 +247,39 @@ export async function cleanupE2eData(runId: string): Promise<void> {
     await client.query('DELETE FROM ai_models WHERE id = ANY($1::uuid[])', [modelIds]);
     await client.query('DELETE FROM ai_models WHERE endpoint_id = ANY($1::uuid[])', [endpointIds]);
     await client.query('DELETE FROM ai_endpoints WHERE id = ANY($1::uuid[])', [endpointIds]);
+  });
+}
+
+// Seeds a run-scoped active LinkedIn session so the search wizard exposes the
+// provider and enables saving/running. Use removeLinkedInSession in a finally
+// block; it only deletes the session this run created, never the user's own.
+export async function seedLinkedInSession(runId: string): Promise<void> {
+  await withDb(async (client) => {
+    const provider = await client.query<{ id: string }>(
+      "SELECT id::text AS id FROM providers WHERE provider_key = 'linkedin'",
+    );
+    const providerId = provider.rows[0]?.id;
+    if (!providerId) {
+      throw new Error('LinkedIn provider seed is missing');
+    }
+
+    await client.query(
+      `
+        INSERT INTO provider_sessions(provider_id, label, status, session_data, last_verified_at)
+        VALUES ($1::uuid, $2, 'active', $3::jsonb, now())
+      `,
+      [
+        providerId,
+        `E2E Session ${runId}`,
+        JSON.stringify({ secrets: { li_at: `e2e-${runId}`, jsessionid: 'ajax:e2e' } }),
+      ],
+    );
+  });
+}
+
+export async function removeLinkedInSession(runId: string): Promise<void> {
+  await withDb(async (client) => {
+    await client.query('DELETE FROM provider_sessions WHERE label = $1', [`E2E Session ${runId}`]);
   });
 }
 
@@ -664,6 +707,77 @@ export async function seedAiReviewScenario(runId: string): Promise<SeededAiRevie
       jobId,
       title,
     };
+  });
+}
+
+// Seeds a batch of active/new offers (all sharing a title prefix) tied to a
+// single search so they show up under the default "standard" jobs filter. Used
+// by the layout tests that need a list taller than the mobile viewport.
+export async function seedJobsBatch(
+  runId: string,
+  count: number,
+): Promise<{ searchId: string; titlePrefix: string }> {
+  return withDb(async (client) => {
+    const provider = await client.query<{ id: string }>(
+      "SELECT id::text AS id FROM providers WHERE provider_key = 'linkedin'",
+    );
+    const providerId = provider.rows[0]?.id;
+    if (!providerId) {
+      throw new Error('LinkedIn provider seed is missing');
+    }
+
+    const titlePrefix = `E2E Batch ${runId}`;
+    const search = await client.query<{ id: string }>(
+      `
+        INSERT INTO searches(provider_id, name, query, enabled)
+        VALUES ($1::uuid, $2, $3::jsonb, true)
+        RETURNING id::text AS id
+      `,
+      [
+        providerId,
+        `E2E Batch Search ${runId}`,
+        JSON.stringify({ keywords: titlePrefix, location: 'Italy', providerKey: 'linkedin' }),
+      ],
+    );
+    const searchId = search.rows[0]!.id;
+
+    for (let index = 0; index < count; index += 1) {
+      const job = await client.query<{ id: string }>(
+        `
+          INSERT INTO jobs(
+            title,
+            company_name,
+            location_text,
+            workplace_type,
+            employment_type,
+            seniority,
+            published_at,
+            local_status,
+            availability_status,
+            metadata
+          )
+          VALUES ($1, $2, $3, 'Ibrido', 'Tempo pieno', 'Mid', now() - ($4 || ' hours')::interval,
+                  'new', 'active', $5::jsonb)
+          RETURNING id::text AS id
+        `,
+        [
+          `${titlePrefix} #${index}`,
+          `Batch Company ${index}`,
+          'Torino, Piemonte, Italia (Ibrido)',
+          String(index),
+          JSON.stringify({ e2eRunId: runId }),
+        ],
+      );
+      await client.query(
+        `
+          INSERT INTO job_search_presence(job_id, search_id, metadata)
+          VALUES ($1::uuid, $2::uuid, $3::jsonb)
+        `,
+        [job.rows[0]!.id, searchId, JSON.stringify({ e2eRunId: runId })],
+      );
+    }
+
+    return { searchId, titlePrefix };
   });
 }
 

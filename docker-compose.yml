@@ -24,23 +24,25 @@ services:
     environment:
       NODE_ENV: production
       API_HOST: 0.0.0.0
-      API_PORT: 3000
+      API_PORT: ${API_PORT:-3000}
       API_CORS_ORIGIN: ${API_CORS_ORIGIN:-http://localhost:5173}
       API_RUN_MIGRATIONS: ${API_RUN_MIGRATIONS:-true}
       DATABASE_URL: ${DATABASE_URL:-postgresql://joblens:joblens@postgres:5432/joblens}
       AI_ENDPOINT_URL: ${AI_ENDPOINT_URL:-}
     ports:
-      - '${API_PORT:-3000}:3000'
+      - '${API_PORT:-3000}:${API_PORT:-3000}'
     depends_on:
       postgres:
         condition: service_healthy
+    # Healthcheck runs inside the container and reads the port the API actually
+    # binds to (API_PORT), so it keeps working when the port is changed at deploy.
     healthcheck:
       test:
         [
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:3000/api/v1/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:'+(process.env.API_PORT||3000)+'/api/v1/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s
@@ -67,8 +69,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # `$$WORKER_PORT` is escaped so the container shell expands it at runtime to
+    # the port the worker actually binds to, surviving any port change at deploy.
     healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8100/health']
+      test: ['CMD-SHELL', 'curl -fsS "http://127.0.0.1:$${WORKER_PORT:-8090}/health"']
       interval: 10s
       timeout: 5s
       retries: 10

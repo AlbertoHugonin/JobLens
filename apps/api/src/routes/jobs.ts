@@ -279,7 +279,15 @@ const jobDetailSchema = {
 
 const jobExportSchema = {
   type: 'object',
-  required: ['exportedAt', 'externalJobs', 'job', 'latestDescription', 'latestReview', 'searches'],
+  required: [
+    'exportedAt',
+    'externalJobs',
+    'job',
+    'latestDescription',
+    'latestReview',
+    'reviews',
+    'searches',
+  ],
   properties: {
     exportedAt: { type: 'string', format: 'date-time' },
     externalJobs: { type: 'array', items: jobExternalSchema },
@@ -289,6 +297,7 @@ const jobExportSchema = {
     },
     latestDescription: { anyOf: [jobDescriptionSchema, { type: 'null' }] },
     latestReview: { anyOf: [jobReviewSchema, { type: 'null' }] },
+    reviews: { type: 'array', items: jobReviewDetailSchema },
     searches: { type: 'array', items: jobSearchPresenceSchema },
   },
 } as const;

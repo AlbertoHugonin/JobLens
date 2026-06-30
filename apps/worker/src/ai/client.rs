@@ -21,6 +21,44 @@ pub(crate) struct AiCompletion {
     pub(crate) raw_output: String,
 }
 
+/// Outcome of a failed AI request, split so callers can treat a server that is
+/// simply down differently from one that answered with an error.
+#[derive(Debug)]
+pub(crate) enum AiRequestError {
+    /// The endpoint could not be reached (connection refused, host down, …).
+    Unreachable(anyhow::Error),
+    /// The endpoint responded but the call failed (HTTP error, bad body, timeout).
+    Failed(anyhow::Error),
+}
+
+impl AiRequestError {
+    pub(crate) fn is_unreachable(&self) -> bool {
+        matches!(self, AiRequestError::Unreachable(_))
+    }
+
+    pub(crate) fn message(&self) -> String {
+        match self {
+            AiRequestError::Unreachable(error) | AiRequestError::Failed(error) => {
+                format!("{error:#}")
+            }
+        }
+    }
+}
+
+impl From<anyhow::Error> for AiRequestError {
+    fn from(error: anyhow::Error) -> Self {
+        AiRequestError::Failed(error)
+    }
+}
+
+fn classify_send_error(error: reqwest::Error) -> AiRequestError {
+    if error.is_connect() {
+        AiRequestError::Unreachable(anyhow::Error::new(error).context("AI endpoint unreachable"))
+    } else {
+        AiRequestError::Failed(anyhow::Error::new(error).context("AI review request failed"))
+    }
+}
+
 impl AiRuntime {
     pub(crate) fn from_value(value: &Value) -> Self {
         let object = value.as_object();
@@ -42,35 +80,48 @@ pub(crate) async fn request_ai_review(
     model_name: &str,
     prompt: &str,
     runtime: &AiRuntime,
-) -> Result<AiCompletion> {
+    response_schema: &Value,
+) -> Result<AiCompletion, AiRequestError> {
     let started = Instant::now();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(runtime.timeout_seconds))
         .build()
         .context("cannot build AI HTTP client")?;
     let response = client
-        .post(build_generate_url(base_url)?)
+        .post(build_chat_url(base_url)?)
         .json(&json!({
-            "format": "json",
+            "format": response_schema,
             "keep_alive": runtime.keep_alive,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a local job-offer evaluator. Return only valid compact JSON matching the provided schema. Do not use markdown or add text outside JSON."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
             "model": model_name,
             "options": {
                 "num_ctx": runtime.num_ctx,
                 "num_predict": runtime.num_predict,
                 "temperature": runtime.temperature,
             },
-            "prompt": prompt,
             "stream": false,
             "think": runtime.think,
         }))
         .send()
         .await
-        .context("AI review request failed")?;
+        .map_err(classify_send_error)?;
     let status = response.status();
     let body = response.text().await.context("read AI response failed")?;
 
     if !status.is_success() {
-        return Err(anyhow!("AI endpoint returned HTTP {}", status.as_u16()));
+        return Err(AiRequestError::Failed(anyhow!(
+            "AI endpoint returned HTTP {}",
+            status.as_u16()
+        )));
     }
 
     let parsed = serde_json::from_str::<Value>(&body).unwrap_or(Value::String(body));
@@ -85,15 +136,19 @@ pub(crate) async fn request_ai_review(
     })
 }
 
-fn build_generate_url(base_url: &str) -> Result<String> {
+fn build_chat_url(base_url: &str) -> Result<String> {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(anyhow!("AI endpoint base URL is empty"));
     }
-    if trimmed.ends_with("/api/generate") {
+    if trimmed.ends_with("/api/chat") {
         Ok(trimmed.to_string())
+    } else if let Some(prefix) = trimmed.strip_suffix("/api/generate") {
+        Ok(format!("{prefix}/api/chat"))
+    } else if trimmed.ends_with("/api") {
+        Ok(format!("{trimmed}/chat"))
     } else {
-        Ok(format!("{trimmed}/api/generate"))
+        Ok(format!("{trimmed}/api/chat"))
     }
 }
 
@@ -180,4 +235,25 @@ fn read_bool(object: Option<&Map<String, Value>>, key: &str, fallback: bool) -> 
         .and_then(|value| value.get(key))
         .and_then(Value::as_bool)
         .unwrap_or(fallback)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_url_accepts_base_or_legacy_generate_url() {
+        assert_eq!(
+            build_chat_url("http://localhost:11434").expect("base url"),
+            "http://localhost:11434/api/chat"
+        );
+        assert_eq!(
+            build_chat_url("http://localhost:11434/api").expect("api url"),
+            "http://localhost:11434/api/chat"
+        );
+        assert_eq!(
+            build_chat_url("http://localhost:11434/api/generate").expect("generate url"),
+            "http://localhost:11434/api/chat"
+        );
+    }
 }

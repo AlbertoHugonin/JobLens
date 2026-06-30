@@ -50,12 +50,22 @@ interface AiSettingsBody {
   candidateProfile?: string | undefined;
   enabled?: boolean | undefined;
   evaluationRules?: string | undefined;
+  outputLanguage?: string | undefined;
   pauses?:
     | Array<{
         dayOfWeek: number;
         enabled: boolean;
         endTime: string;
         startTime: string;
+      }>
+    | undefined;
+  reviewFields?:
+    | Array<{
+        description: string;
+        enabled: boolean;
+        key: string;
+        label: string;
+        maxItems: number;
       }>
     | undefined;
   runtime?:
@@ -142,6 +152,21 @@ const pauseSchema = {
   },
 } as const;
 
+const reviewOutputLanguageValues = ['en', 'it', 'job_language', 'profile_language'] as const;
+
+const reviewFieldSchema = {
+  type: 'object',
+  required: ['description', 'enabled', 'key', 'label', 'maxItems'],
+  additionalProperties: false,
+  properties: {
+    description: { type: 'string' },
+    enabled: { type: 'boolean' },
+    key: { type: 'string', minLength: 1, maxLength: 100 },
+    label: { type: 'string' },
+    maxItems: { type: 'integer', minimum: 1, maximum: 10 },
+  },
+} as const;
+
 const aiSettingsSchema = {
   type: 'object',
   required: [
@@ -149,7 +174,9 @@ const aiSettingsSchema = {
     'candidateProfile',
     'enabled',
     'evaluationRules',
+    'outputLanguage',
     'pauses',
+    'reviewFields',
     'rulesTemplate',
     'rulesTemplateVersion',
     'runtime',
@@ -160,7 +187,9 @@ const aiSettingsSchema = {
     candidateProfile: { type: 'string' },
     enabled: { type: 'boolean' },
     evaluationRules: { type: 'string' },
+    outputLanguage: { type: 'string', enum: reviewOutputLanguageValues },
     pauses: { type: 'array', items: pauseSchema },
+    reviewFields: { type: 'array', items: reviewFieldSchema },
     rulesTemplate: { type: 'string' },
     rulesTemplateVersion: { type: 'number' },
     runtime: runtimeSchema,
@@ -432,10 +461,7 @@ function buildOllamaModelMetadata(value: unknown, syncedAt: string): Record<stri
   return metadata;
 }
 
-async function fetchOllamaModels(
-  baseUrl: string,
-  timeoutMs = 8000,
-): Promise<OllamaModelRecord[]> {
+async function fetchOllamaModels(baseUrl: string, timeoutMs = 8000): Promise<OllamaModelRecord[]> {
   const target = `${baseUrl.replace(/\/+$/, '')}/api/tags`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -553,7 +579,9 @@ export async function registerAiRoutes(
             candidateProfile: { type: 'string' },
             enabled: { type: 'boolean' },
             evaluationRules: { type: 'string' },
+            outputLanguage: { type: 'string', enum: reviewOutputLanguageValues },
             pauses: { type: 'array', items: pauseSchema },
+            reviewFields: { type: 'array', items: reviewFieldSchema },
             runtime: {
               type: 'object',
               additionalProperties: false,

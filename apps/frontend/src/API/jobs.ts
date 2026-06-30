@@ -98,6 +98,7 @@ export interface JobExportDto {
   job: Record<string, unknown>;
   latestDescription: JobDescriptionDto | null;
   latestReview: JobReviewSummaryDto | null;
+  reviews: JobReviewDetailDto[];
   searches: JobSearchPresenceDto[];
 }
 

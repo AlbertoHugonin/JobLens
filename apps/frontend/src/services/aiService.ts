@@ -13,9 +13,12 @@ import type {
   AiModel,
   AiModelInstallResult,
   AiPauseWindow,
+  AiReviewField,
+  AiReviewOutputLanguage,
   AiRuntimeSettings,
   AiSettings,
 } from '../models/ai';
+import { defaultAiReviewFields } from '../models/ai';
 import { normalizeActivity } from './activityService';
 
 const DEFAULT_RUNTIME: AiRuntimeSettings = {
@@ -30,6 +33,23 @@ const DEFAULT_RUNTIME: AiRuntimeSettings = {
   think: false,
   timeoutSeconds: 120,
 };
+const REVIEW_OUTPUT_LANGUAGES = new Set<AiReviewOutputLanguage>([
+  'en',
+  'it',
+  'job_language',
+  'profile_language',
+]);
+const RESERVED_REVIEW_FIELD_KEYS = new Set([
+  'decision',
+  'diagnostic',
+  'location_fit',
+  'missing_skills',
+  'optional_strengths',
+  'reason',
+  'score',
+  'seniority_fit',
+  'skill_fit',
+]);
 
 function normalizeDate(value: string): Date {
   const parsed = new Date(value);
@@ -42,6 +62,77 @@ function normalizeString(value: string, fallback = ''): string {
 
 function normalizeNumber(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeReviewOutputLanguage(value: string): AiReviewOutputLanguage {
+  return REVIEW_OUTPUT_LANGUAGES.has(value as AiReviewOutputLanguage)
+    ? (value as AiReviewOutputLanguage)
+    : 'it';
+}
+
+export function normalizeReviewFieldKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+}
+
+function humanizeReviewFieldKey(key: string): string {
+  return key
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+export function normalizeAiReviewFields(items: unknown): AiReviewField[] {
+  if (!Array.isArray(items)) {
+    return defaultAiReviewFields.map((field) => ({ ...field }));
+  }
+
+  const seen = new Set<string>();
+  const fields = items
+    .filter((item): item is Partial<AiReviewField> => typeof item === 'object' && item !== null)
+    .map((item) => {
+      const key = normalizeReviewFieldKey(typeof item.key === 'string' ? item.key : '');
+      if (
+        !key ||
+        key.length < 2 ||
+        !/^[a-z][a-z0-9_]*$/.test(key) ||
+        RESERVED_REVIEW_FIELD_KEYS.has(key) ||
+        seen.has(key)
+      ) {
+        return null;
+      }
+
+      seen.add(key);
+      return {
+        description:
+          typeof item.description === 'string' ? item.description.trim().slice(0, 500) : '',
+        enabled: typeof item.enabled === 'boolean' ? item.enabled : true,
+        key,
+        label:
+          typeof item.label === 'string' && item.label.trim()
+            ? item.label.trim().slice(0, 80)
+            : humanizeReviewFieldKey(key),
+        maxItems: Math.max(
+          1,
+          Math.min(
+            10,
+            Math.round(
+              typeof item.maxItems === 'number' && Number.isFinite(item.maxItems)
+                ? item.maxItems
+                : 3,
+            ),
+          ),
+        ),
+      };
+    })
+    .filter((item): item is AiReviewField => item !== null);
+
+  return fields.length > 0 ? fields : defaultAiReviewFields.map((field) => ({ ...field }));
 }
 
 export function normalizeAiRuntime(dto: AiRuntimeSettingsDto): AiRuntimeSettings {
@@ -89,7 +180,9 @@ export function normalizeAiSettings(dto: AiSettingsDto): AiSettings {
     candidateProfile: normalizeString(dto.candidateProfile),
     enabled: dto.enabled,
     evaluationRules: normalizeString(dto.evaluationRules),
+    outputLanguage: normalizeReviewOutputLanguage(dto.outputLanguage),
     pauses: dto.pauses.map(normalizeAiPause),
+    reviewFields: normalizeAiReviewFields(dto.reviewFields),
     rulesTemplate: normalizeString(dto.rulesTemplate),
     rulesTemplateVersion: Math.max(1, Math.round(normalizeNumber(dto.rulesTemplateVersion, 1))),
     runtime: normalizeAiRuntime(dto.runtime),

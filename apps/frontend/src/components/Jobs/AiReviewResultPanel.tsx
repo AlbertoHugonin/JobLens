@@ -18,18 +18,42 @@ import { JobDecisionBadge } from './JobStatusBadges';
 type Severity = 'success' | 'warning' | 'danger';
 
 interface ParsedReview {
-  blockers: string[];
-  cautionNotes: string[];
   decision: JobReviewDecision | null;
+  evidence: ReviewEvidence[];
   locationFit: string | null;
-  mandatoryGaps: string[];
-  matchingPoints: string[];
-  optionalMatches: string[];
   reason: string | null;
   score: number | null;
   seniorityFit: string | null;
   skillFit: string | null;
 }
+
+interface ReviewFieldConfig {
+  key: string;
+  label: string;
+}
+
+interface ReviewEvidence {
+  items: string[];
+  key: string;
+  label: string;
+  variant: Severity;
+}
+
+const DEFAULT_REVIEW_FIELD_CONFIGS: ReviewFieldConfig[] = [
+  { key: 'matching_points', label: 'Punti di match' },
+  { key: 'explicit_optional_matches', label: 'Match opzionali' },
+  { key: 'mandatory_gaps', label: 'Gap obbligatori' },
+  { key: 'caution_notes', label: 'Note di attenzione' },
+  { key: 'blockers', label: 'Bloccanti' },
+];
+const CORE_REVIEW_KEYS = new Set([
+  'decision',
+  'location_fit',
+  'reason',
+  'score',
+  'seniority_fit',
+  'skill_fit',
+]);
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -49,15 +73,74 @@ function asDecision(value: unknown): JobReviewDecision | null {
   return value === 'apply' || value === 'maybe' || value === 'reject' ? value : null;
 }
 
-function parseReviewResult(result: Record<string, unknown>): ParsedReview {
+function humanizeKey(key: string): string {
+  return key
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function parseReviewFieldConfigs(metrics: Record<string, unknown>): ReviewFieldConfig[] {
+  const rawFields = metrics.reviewFields;
+  if (!Array.isArray(rawFields)) {
+    return DEFAULT_REVIEW_FIELD_CONFIGS;
+  }
+
+  const fields = rawFields
+    .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+    .filter((item) => item.enabled !== false)
+    .map((item) => {
+      const key = asString(item.key);
+      if (!key) {
+        return null;
+      }
+
+      return {
+        key,
+        label: asString(item.label) ?? humanizeKey(key),
+      };
+    })
+    .filter((item): item is ReviewFieldConfig => item !== null);
+
+  return fields.length > 0 ? fields : DEFAULT_REVIEW_FIELD_CONFIGS;
+}
+
+function evidenceVariant(key: string): Severity {
+  if (key === 'blockers') {
+    return 'danger';
+  }
+  if (key === 'matching_points' || key === 'explicit_optional_matches') {
+    return 'success';
+  }
+  return 'warning';
+}
+
+function parseReviewResult(
+  result: Record<string, unknown>,
+  metrics: Record<string, unknown>,
+): ParsedReview {
+  const configs = parseReviewFieldConfigs(metrics);
+  const configuredKeys = new Set(configs.map((field) => field.key));
+  const extraConfigs = Object.entries(result)
+    .filter(
+      ([key, value]) =>
+        !CORE_REVIEW_KEYS.has(key) && !configuredKeys.has(key) && Array.isArray(value),
+    )
+    .map(([key]) => ({ key, label: humanizeKey(key) }));
+  const evidence = [...configs, ...extraConfigs]
+    .map((field) => ({
+      items: asStringArray(result[field.key]),
+      key: field.key,
+      label: field.label,
+      variant: evidenceVariant(field.key),
+    }))
+    .filter((field) => field.items.length > 0);
+
   return {
-    blockers: asStringArray(result.blockers),
-    cautionNotes: asStringArray(result.caution_notes),
     decision: asDecision(result.decision),
+    evidence,
     locationFit: asString(result.location_fit),
-    mandatoryGaps: asStringArray(result.mandatory_gaps),
-    matchingPoints: asStringArray(result.matching_points),
-    optionalMatches: asStringArray(result.explicit_optional_matches),
     reason: asString(result.reason),
     score: asNumber(result.score),
     seniorityFit: asString(result.seniority_fit),
@@ -139,7 +222,9 @@ function ReviewList({
   return (
     <Col md={6}>
       <div className={`h-100 rounded-3 p-3 bg-${variant}-subtle`}>
-        <div className={`d-flex align-items-center gap-2 mb-2 fw-semibold text-${variant}-emphasis`}>
+        <div
+          className={`d-flex align-items-center gap-2 mb-2 fw-semibold text-${variant}-emphasis`}
+        >
           {icon}
           <span>{title}</span>
           <span className="ms-auto font-mono small">{items.length}</span>
@@ -154,8 +239,24 @@ function ReviewList({
   );
 }
 
+function fieldIcon(key: string): ReactNode {
+  if (key === 'blockers') {
+    return <Ban aria-hidden="true" size={16} />;
+  }
+  if (key === 'matching_points') {
+    return <CheckCircle2 aria-hidden="true" size={16} />;
+  }
+  if (key === 'explicit_optional_matches') {
+    return <CirclePlus aria-hidden="true" size={16} />;
+  }
+  if (key === 'mandatory_gaps') {
+    return <TriangleAlert aria-hidden="true" size={16} />;
+  }
+  return <Info aria-hidden="true" size={16} />;
+}
+
 export function AiReviewResultPanel({ review }: { review: JobReviewDetail }) {
-  const parsed = parseReviewResult(review.result);
+  const parsed = parseReviewResult(review.result, review.metrics);
   const decision = review.decision ?? parsed.decision;
   const score = review.score ?? parsed.score;
   const variant = decision ? getJobDecisionVariant(decision) : 'secondary';
@@ -197,36 +298,15 @@ export function AiReviewResultPanel({ review }: { review: JobReviewDetail }) {
       {parsed.reason ? <p className="mb-0">{parsed.reason}</p> : null}
 
       <Row className="g-3">
-        <ReviewList
-          icon={<CheckCircle2 aria-hidden="true" size={16} />}
-          items={parsed.matchingPoints}
-          title="Punti di match"
-          variant="success"
-        />
-        <ReviewList
-          icon={<CirclePlus aria-hidden="true" size={16} />}
-          items={parsed.optionalMatches}
-          title="Match opzionali"
-          variant="success"
-        />
-        <ReviewList
-          icon={<TriangleAlert aria-hidden="true" size={16} />}
-          items={parsed.mandatoryGaps}
-          title="Gap obbligatori"
-          variant="warning"
-        />
-        <ReviewList
-          icon={<Info aria-hidden="true" size={16} />}
-          items={parsed.cautionNotes}
-          title="Note di attenzione"
-          variant="warning"
-        />
-        <ReviewList
-          icon={<Ban aria-hidden="true" size={16} />}
-          items={parsed.blockers}
-          title="Bloccanti"
-          variant="danger"
-        />
+        {parsed.evidence.map((field) => (
+          <ReviewList
+            icon={fieldIcon(field.key)}
+            items={field.items}
+            key={field.key}
+            title={field.label}
+            variant={field.variant}
+          />
+        ))}
       </Row>
     </Stack>
   );

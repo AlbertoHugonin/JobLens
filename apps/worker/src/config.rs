@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
+    pub(crate) ai_review_cooldown: Duration,
+    pub(crate) ai_review_max_attempts: u32,
     pub(crate) collection_page_delay: Duration,
     pub(crate) database_url: Option<String>,
     pub(crate) dummy_duration: Duration,
@@ -29,6 +31,13 @@ pub fn read_config() -> WorkerConfig {
         .unwrap_or_else(|| format!("joblens-worker-{}", Uuid::new_v4()));
 
     WorkerConfig {
+        // When an AI endpoint failure re-queues a review, ai_review claiming is
+        // paused for this long so the queue waits instead of churning.
+        ai_review_cooldown: read_duration_secs("WORKER_AI_COOLDOWN_SECONDS", 60),
+        // Max claim attempts for a review that fails for non-connectivity reasons
+        // before it is marked failed with a diagnostic review. Connectivity
+        // failures (endpoint down) are not capped — they wait for it to return.
+        ai_review_max_attempts: read_u32("WORKER_AI_MAX_REVIEW_ATTEMPTS", 3).max(1),
         // Gentle pacing between LinkedIn collection pages to avoid hammering the
         // API; set WORKER_LINKEDIN_PAGE_DELAY_MS=0 to disable.
         collection_page_delay: read_duration_ms("WORKER_LINKEDIN_PAGE_DELAY_MS", 1_200),
@@ -55,6 +64,13 @@ fn read_u16(key: &str, fallback: u16) -> u16 {
     env::var(key)
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(fallback)
+}
+
+fn read_u32(key: &str, fallback: u32) -> u32 {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(fallback)
 }
 

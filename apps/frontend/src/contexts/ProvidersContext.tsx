@@ -1,11 +1,24 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import {
   debugLinkedInHar as debugLinkedInHarRequest,
   fetchLinkedInSessions,
   uploadLinkedInHar as uploadLinkedInHarRequest,
 } from '../API/linkedin';
-import { createProviderCredentials, fetchProviders, verifyProviderSession } from '../API/providers';
+import {
+  createProviderCredentials,
+  deleteProviderSession,
+  fetchProviders,
+  verifyProviderSession,
+} from '../API/providers';
 import type {
   LinkedInHarDebug,
   ProviderDescriptor,
@@ -24,6 +37,7 @@ const LINKEDIN_PROVIDER_KEY = 'linkedin';
 
 interface ProvidersContextValue {
   debugHar: (harText: string) => Promise<LinkedInHarDebug | null>;
+  deleteSession: (sessionId: string) => Promise<boolean>;
   descriptor: ProviderDescriptor | null;
   loadDescriptor: () => Promise<void>;
   loadSessions: (force?: boolean) => Promise<void>;
@@ -84,18 +98,24 @@ export function ProvidersProvider({ children }: { children: ReactNode }) {
     return request;
   }, []);
 
-  const saveCredentials = useCallback(async (credentials: Record<string, string>, label?: string) => {
-    try {
-      const response = await createProviderCredentials(LINKEDIN_PROVIDER_KEY, { credentials, label });
-      const session = normalizeProviderSession(response.data);
-      setSessions((items) => [session, ...items]);
-      setSessionError(null);
-      return session;
-    } catch (caught: unknown) {
-      setSessionError(readErrorMessage(caught));
-      return null;
-    }
-  }, []);
+  const saveCredentials = useCallback(
+    async (credentials: Record<string, string>, label?: string) => {
+      try {
+        const response = await createProviderCredentials(LINKEDIN_PROVIDER_KEY, {
+          credentials,
+          label,
+        });
+        const session = normalizeProviderSession(response.data);
+        setSessions((items) => [session, ...items]);
+        setSessionError(null);
+        return session;
+      } catch (caught: unknown) {
+        setSessionError(readErrorMessage(caught));
+        return null;
+      }
+    },
+    [],
+  );
 
   const uploadHar = useCallback(async (harText: string, label?: string) => {
     try {
@@ -121,6 +141,18 @@ export function ProvidersProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const deleteSession = useCallback(async (sessionId: string) => {
+    try {
+      await deleteProviderSession(LINKEDIN_PROVIDER_KEY, sessionId);
+      setSessions((items) => items.filter((item) => item.id !== sessionId));
+      setSessionError(null);
+      return true;
+    } catch (caught: unknown) {
+      setSessionError(readErrorMessage(caught));
+      return false;
+    }
+  }, []);
+
   const verifySession = useCallback(async (sessionId: string) => {
     try {
       const response = await verifyProviderSession(LINKEDIN_PROVIDER_KEY, sessionId);
@@ -140,6 +172,7 @@ export function ProvidersProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       debugHar,
+      deleteSession,
       descriptor,
       loadDescriptor,
       loadSessions,
@@ -152,6 +185,7 @@ export function ProvidersProvider({ children }: { children: ReactNode }) {
     }),
     [
       debugHar,
+      deleteSession,
       descriptor,
       loadDescriptor,
       loadSessions,

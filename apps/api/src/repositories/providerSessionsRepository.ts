@@ -71,6 +71,26 @@ export async function listProviderSessions(
   return result.rows.map(mapProviderSession);
 }
 
+export async function hasActiveProviderSession(
+  pool: DatabasePool,
+  providerKey: string,
+): Promise<boolean> {
+  const result = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM provider_sessions
+        JOIN providers ON providers.id = provider_sessions.provider_id
+        WHERE providers.provider_key = $1
+          AND provider_sessions.status = 'active'
+      ) AS exists
+    `,
+    [providerKey],
+  );
+
+  return result.rows[0]?.exists ?? false;
+}
+
 export async function createProviderSession(
   pool: DatabasePool,
   input: {
@@ -169,4 +189,22 @@ export async function markProviderSessionVerified(
 
   const row = result.rows[0];
   return row ? mapProviderSession(row) : null;
+}
+
+export async function deleteProviderSession(
+  pool: DatabasePool,
+  input: { providerKey: string; sessionId: string },
+): Promise<boolean> {
+  const result = await pool.query(
+    `
+      DELETE FROM provider_sessions
+      USING providers
+      WHERE provider_sessions.id = $1
+        AND providers.id = provider_sessions.provider_id
+        AND providers.provider_key = $2
+    `,
+    [input.sessionId, input.providerKey],
+  );
+
+  return (result.rowCount ?? 0) > 0;
 }

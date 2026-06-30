@@ -4,6 +4,8 @@ use super::*;
 
 fn test_config(worker_id: &str) -> WorkerConfig {
     WorkerConfig {
+        ai_review_cooldown: Duration::from_secs(60),
+        ai_review_max_attempts: 3,
         collection_page_delay: Duration::ZERO,
         database_url: None,
         dummy_duration: Duration::from_millis(100),

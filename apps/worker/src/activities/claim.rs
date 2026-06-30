@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 
 use crate::{
     activities::{ClaimedActivity, insert_activity_log},
-    ai::queue::is_ai_review_paused_now,
+    ai::queue::is_ai_review_blocked_now,
     config::WorkerConfig,
     util::duration_as_i64_seconds,
 };
@@ -14,7 +14,7 @@ pub(crate) async fn claim_next_activity(
     config: &WorkerConfig,
 ) -> Result<Option<ClaimedActivity>> {
     let lease_seconds = duration_as_i64_seconds(config.lease_duration);
-    let ai_paused = is_ai_review_paused_now(pool, OffsetDateTime::now_utc()).await?;
+    let ai_paused = is_ai_review_blocked_now(pool, OffsetDateTime::now_utc()).await?;
     let row = sqlx::query(
         r#"
         WITH candidate AS (

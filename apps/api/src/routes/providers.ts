@@ -11,6 +11,7 @@ import { getProvider, listProviders } from '../providers/registry.js';
 import { ProviderError, describeProvider, type ProviderPlugin } from '../providers/types.js';
 import {
   createProviderSession,
+  deleteProviderSession,
   getProviderSessionData,
   listProviderSessions,
   markProviderSessionVerified,
@@ -396,6 +397,34 @@ export async function registerProviderRoutes(
       });
 
       return ok({ ...verification, session });
+    },
+  );
+
+  app.delete<{ Params: SessionParams }>(
+    '/api/v1/providers/:providerKey/sessions/:sessionId',
+    {
+      schema: {
+        response: {
+          200: successResponseSchema({
+            type: 'object',
+            required: ['deleted'],
+            properties: { deleted: { type: 'boolean' } },
+          }),
+        },
+      },
+    },
+    async (request) => {
+      const pool = requireDatabase(db);
+      const plugin = requireKnownProvider(request.params.providerKey);
+      const deleted = await deleteProviderSession(pool, {
+        providerKey: plugin.key,
+        sessionId: request.params.sessionId,
+      });
+      if (!deleted) {
+        throw notFound('Session not found');
+      }
+
+      return ok({ deleted: true });
     },
   );
 

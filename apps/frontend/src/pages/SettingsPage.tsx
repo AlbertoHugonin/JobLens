@@ -7,6 +7,7 @@ import {
   Plug,
   Server,
   SlidersHorizontal,
+  UserRound,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ import Row from 'react-bootstrap/Row';
 import Stack from 'react-bootstrap/Stack';
 
 import { AiBehaviorPanel } from '../components/Settings/AiBehaviorPanel';
+import { AiCandidateProfilePanel } from '../components/Settings/AiCandidateProfilePanel';
 import { AiConnectionPanel } from '../components/Settings/AiConnectionPanel';
 import { AiModelPanel } from '../components/Settings/AiModelPanel';
 import { AiProfileRulesPanel } from '../components/Settings/AiProfileRulesPanel';
@@ -36,6 +38,7 @@ type SettingsKey =
   | 'ai-connection'
   | 'ai-model'
   | 'ai-behavior'
+  | 'ai-profile'
   | 'ai-rules'
   | 'maintenance'
   | 'debug';
@@ -59,12 +62,13 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
     label: 'Provider',
     entries: [
       {
-        description: 'Collega LinkedIn con i cookie di sessione o un import HAR per raccogliere le offerte.',
-        hint: 'Credenziali e import HAR',
+        description:
+          'Gestisci le sessioni dei provider che JobLens usa per raccogliere le offerte.',
+        hint: 'Sessioni e credenziali',
         icon: Plug,
         key: 'provider',
         render: () => <ProviderSessionPanel />,
-        title: 'Sessione LinkedIn',
+        title: 'Sessioni',
       },
     ],
   },
@@ -96,8 +100,17 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
         title: 'Comportamento',
       },
       {
-        description: 'Definisci i criteri di profilo con cui l’AI valuta ogni offerta.',
-        hint: 'Criteri di valutazione',
+        description:
+          'Descrivi chi sei e cosa cerchi: l’AI confronta ogni offerta con questo profilo.',
+        hint: 'Chi sei e cosa cerchi',
+        icon: UserRound,
+        key: 'ai-profile',
+        render: () => <AiCandidateProfilePanel />,
+        title: 'Profilo candidato',
+      },
+      {
+        description: 'Definisci i criteri con cui l’AI valuta ogni offerta e i campi del verdetto.',
+        hint: 'Criteri e campi del verdetto',
         icon: ListChecks,
         key: 'ai-rules',
         render: () => <AiProfileRulesPanel />,

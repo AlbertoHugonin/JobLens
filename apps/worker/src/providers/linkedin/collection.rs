@@ -38,6 +38,11 @@ pub(crate) async fn run_collect_activity(
         .or_else(|| read_json_string(&activity.payload, "searchId"))
         .context("linkedin_collect activity is missing search id")?;
     let search = read_linkedin_search(pool, &search_id).await?;
+    // Stamp the run as soon as it starts (not only on success). The scheduler
+    // gates re-runs on last_run_at, so advancing it here means a run that fails
+    // mid-way is retried after the configured interval instead of being
+    // re-queued every poll tick.
+    mark_search_run_attempted(pool, &search.search_id).await?;
     let fixture_pages = read_fixture_pages(&activity.payload);
     let session = if fixture_pages.is_some() {
         None
@@ -158,7 +163,6 @@ pub(crate) async fn run_collect_activity(
     let complete_collection = stats
         .total_results
         .is_some_and(|total_results| stats.jobs_seen >= total_results);
-    mark_search_run_completed(pool, &search.search_id).await?;
     stats.descriptions_queued =
         enqueue_missing_linkedin_descriptions(pool, &search.search_id, &activity.id).await?;
     if complete_collection {
@@ -440,7 +444,7 @@ async fn update_linkedin_collect_progress(
     }
 }
 
-async fn mark_search_run_completed(pool: &PgPool, search_id: &str) -> Result<()> {
+async fn mark_search_run_attempted(pool: &PgPool, search_id: &str) -> Result<()> {
     sqlx::query("UPDATE searches SET last_run_at = now() WHERE id = $1::uuid")
         .bind(search_id)
         .execute(pool)

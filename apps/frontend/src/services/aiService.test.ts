@@ -42,12 +42,22 @@ describe('aiService', () => {
       candidateProfile: ' Profile ',
       enabled: true,
       evaluationRules: ' Rules ',
+      outputLanguage: 'en',
       pauses: [
         {
           dayOfWeek: 9,
           enabled: true,
           endTime: '18:00',
           startTime: '09:00',
+        },
+      ],
+      reviewFields: [
+        {
+          description: ' Evidence ',
+          enabled: true,
+          key: 'custom-field',
+          label: '',
+          maxItems: 99,
         },
       ],
       rulesTemplate: ' Template ',
@@ -68,6 +78,12 @@ describe('aiService', () => {
     });
 
     expect(settings.activeEndpointId).toBe('endpoint-1');
+    expect(settings.outputLanguage).toBe('en');
+    expect(settings.reviewFields[0]).toMatchObject({
+      key: 'custom_field',
+      label: 'Custom Field',
+      maxItems: 10,
+    });
     expect(settings.runtime.keepAlive).toBe('10m');
     expect(settings.runtime.numCtx).toBe(512);
     expect(settings.runtime.numPredict).toBe(128);

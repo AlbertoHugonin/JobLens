@@ -820,6 +820,7 @@ export async function exportJob(
     },
     latestDescription: job.description,
     latestReview: job.latestReview,
+    reviews: await readJobReviews(pool, id),
     searches: job.searches,
   };
 }

@@ -938,6 +938,16 @@ describe('database migrations', () => {
           id: frontendJobId,
           localStatus: 'applied',
         },
+        reviews: [
+          expect.objectContaining({
+            decision: 'apply',
+            modelName: 'm8-priority',
+            result: {
+              fit: 'high',
+            },
+            score: 88,
+          }),
+        ],
       },
     });
     expect(JSON.stringify(exportResponse.json())).not.toContain('rawCard');
@@ -962,12 +972,22 @@ describe('database migrations', () => {
         candidateProfile: 'M10 candidate profile',
         enabled: true,
         evaluationRules: 'M10 custom evaluation rules',
+        outputLanguage: 'en',
         pauses: [
           {
             dayOfWeek: 1,
             enabled: true,
             endTime: '18:00',
             startTime: '09:00',
+          },
+        ],
+        reviewFields: [
+          {
+            description: 'M10 evidence field',
+            enabled: true,
+            key: 'm10_custom_notes',
+            label: 'M10 custom notes',
+            maxItems: 2,
           },
         ],
         runtime: {
@@ -1061,7 +1081,7 @@ describe('database migrations', () => {
     await pool.query('DELETE FROM ai_models WHERE id = $1', [install.model.id]);
     await pool.query('DELETE FROM ai_endpoints WHERE id = $1', [endpoint.id]);
     await pool.query(
-      "DELETE FROM settings WHERE key IN ('ai.candidate_profile', 'ai.pauses', 'ai.runtime', 'evaluation.rules')",
+      "DELETE FROM settings WHERE key IN ('ai.candidate_profile', 'ai.pauses', 'ai.review_fields', 'ai.review_output_language', 'ai.runtime', 'evaluation.rules')",
     );
     await pool.query("UPDATE settings SET value = 'false'::jsonb WHERE key = 'ai.enabled'");
     await pool.query(
@@ -1082,10 +1102,20 @@ describe('database migrations', () => {
         candidateProfile: 'M10 candidate profile',
         enabled: true,
         evaluationRules: 'M10 custom evaluation rules',
+        outputLanguage: 'en',
         pauses: [
           {
             dayOfWeek: 1,
             enabled: true,
+          },
+        ],
+        reviewFields: [
+          {
+            description: 'M10 evidence field',
+            enabled: true,
+            key: 'm10_custom_notes',
+            label: 'M10 custom notes',
+            maxItems: 2,
           },
         ],
         runtime: {

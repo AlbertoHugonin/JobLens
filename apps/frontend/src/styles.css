@@ -210,11 +210,55 @@ h6,
     height: 100%;
     max-height: 100%;
   }
+
+  /* Settings doesn't use the fixed two-pane model: it scrolls as a whole within
+     the viewport-bound content area (the side nav is sticky). Without this the
+     tall tabs (e.g. "Modello") overflow the hidden content container and the
+     bottom is unreachable on desktop. overflow-x is pinned to hidden because
+     enabling overflow-y otherwise turns the x axis into `auto`, and Bootstrap's
+     row negative margins then add a spurious horizontal scrollbar. */
+  .settings-page {
+    height: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
 }
 
 @media (max-width: 991.98px) {
+  /* Below lg the two panes stack. Drop the desktop "scroll each pane" model and
+     instead keep the navbar fixed while the whole content area scrolls as one.
+     Otherwise the first pane (e.g. the offers list) fills the screen and
+     everything beneath it is clipped and unreachable on phones. */
+  .app-main {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-content-container,
+  .app-page,
+  .app-page-fill,
+  .app-page-pane {
+    height: auto;
+    overflow: visible;
+  }
+
   .app-page-fill {
     --bs-gutter-y: 1rem;
+    flex: 0 0 auto;
+  }
+
+  /* Cards grow to fit their content so the content area (not each card) scrolls. */
+  .scroll-card {
+    max-height: none;
+  }
+
+  .scroll-card > .card-body,
+  .detail-scroll-pane,
+  .job-list-card > .job-list,
+  .activity-list-card > .activity-list,
+  .search-list-card > .list-group {
+    overflow: visible;
   }
 }
 
@@ -245,6 +289,170 @@ h6,
 
 .settings-content-stack {
   max-width: 60rem;
+}
+
+/* AI rules — "La scheda del verdetto" */
+.verdict-spine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.verdict-chip {
+  align-items: center;
+  background: var(--joblens-accent-soft);
+  border: 1px solid var(--bs-primary-border-subtle);
+  border-radius: 999px;
+  color: var(--joblens-accent-strong);
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 600;
+  gap: 0.3rem;
+  padding: 0.2rem 0.7rem;
+}
+
+.verdict-slip {
+  border: 1px solid var(--joblens-border);
+  border-left-width: 3px;
+  border-radius: 0.6rem;
+  padding: 0.85rem 1rem;
+}
+
+.verdict-slip--custom {
+  border-left-color: var(--joblens-accent);
+}
+
+.verdict-slip-label.form-control {
+  background: transparent;
+  border-color: transparent;
+  font-size: 1.02rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+}
+
+.verdict-slip-label.form-control:hover {
+  background: var(--joblens-accent-tint);
+}
+
+.verdict-slip-label.form-control:focus {
+  background: #fff;
+  border-color: var(--joblens-border);
+  box-shadow: none;
+}
+
+.verdict-slip-key {
+  align-items: center;
+  color: var(--joblens-muted);
+  display: inline-flex;
+  font-family: var(--joblens-font-mono);
+  font-size: 0.82rem;
+  gap: 0.3rem;
+}
+
+.verdict-slip-key-input.form-control {
+  max-width: 18rem;
+}
+
+.verdict-stepper {
+  align-items: center;
+  border: 1px solid var(--joblens-border);
+  border-radius: 0.5rem;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.verdict-stepper button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--joblens-text);
+  display: inline-flex;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+}
+
+.verdict-stepper button:hover:not(:disabled) {
+  background: var(--joblens-accent-tint);
+}
+
+.verdict-stepper button:disabled {
+  color: var(--joblens-border);
+}
+
+.verdict-stepper-value {
+  font-family: var(--joblens-font-mono);
+  font-size: 0.85rem;
+  min-width: 1.6rem;
+  text-align: center;
+}
+
+.verdict-add {
+  background: transparent;
+  border: 1px dashed var(--joblens-border);
+  border-radius: 0.6rem;
+  color: var(--joblens-accent-strong);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.6rem 1rem;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+  width: 100%;
+}
+
+.verdict-add:hover:not(:disabled) {
+  background: var(--joblens-accent-tint);
+  border-color: var(--joblens-accent);
+}
+
+.verdict-add:disabled {
+  opacity: 0.6;
+}
+
+/* Provider sessions list */
+.session-list {
+  border: 1px solid var(--joblens-border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.session-row {
+  padding: 0.85rem 1rem;
+}
+
+.session-row + .session-row {
+  border-top: 1px solid var(--joblens-border);
+}
+
+.session-dot {
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  height: 0.6rem;
+  width: 0.6rem;
+}
+
+.session-dot--success {
+  background: var(--bs-success);
+}
+
+.session-dot--warning {
+  background: var(--bs-warning);
+}
+
+.session-dot--danger {
+  background: var(--bs-danger);
+}
+
+.session-dot--secondary {
+  background: var(--joblens-muted);
+}
+
+.session-empty {
+  border: 1px dashed var(--joblens-border);
+  border-radius: 0.6rem;
+  padding: 1.75rem 1.5rem;
+  text-align: center;
 }
 
 /* Top navbar */
@@ -397,6 +605,10 @@ h6,
 
 .job-list-meta {
   display: grid;
+  /* minmax(0, 1fr) lets the single column shrink below its content width so the
+     company/location lines truncate with an ellipsis instead of overflowing the
+     card when horizontal space is tight. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.05rem;
   min-width: 0;
   white-space: nowrap;

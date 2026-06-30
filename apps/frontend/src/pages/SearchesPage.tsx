@@ -10,6 +10,7 @@ import { SearchRunPanel } from '../components/Searches/SearchRunPanel';
 import { SearchSummaryCard } from '../components/Searches/SearchSummaryCard';
 import { SearchWizardDrawer } from '../components/Searches/SearchWizardDrawer';
 import { EmptyState } from '../components/Utilities/SectionState';
+import { ProvidersProvider, useProviders } from '../contexts/ProvidersContext';
 import { SearchesProvider, useSearches } from '../contexts/SearchesContext';
 import { useActivityEvents } from '../hooks/useActivityEvents';
 import { useInitialLoad } from '../hooks/useInitialLoad';
@@ -32,12 +33,20 @@ function SearchesWorkspace() {
     selectSearch,
     total,
   } = useSearches();
+  const { loadSessions, sessions } = useProviders();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingSearch, setEditingSearch] = useState<Search | null>(null);
 
+  // A provider can only be used (and a search can only run) when there is at
+  // least one active LinkedIn session, otherwise every collection would fail.
+  const hasActiveSession = useMemo(
+    () => sessions.some((session) => session.status === 'active'),
+    [sessions],
+  );
+
   const initialLoad = useCallback(async () => {
-    await loadSearches(true);
-  }, [loadSearches]);
+    await Promise.all([loadSearches(true), loadSessions(true)]);
+  }, [loadSearches, loadSessions]);
   const selectedSearch = useMemo(
     () => searches.find((search) => search.id === selectedId),
     [searches, selectedId],
@@ -97,7 +106,8 @@ function SearchesWorkspace() {
             <div className="search-detail-stack d-grid gap-3">
               <SearchSummaryCard onEdit={() => openEdit(selectedSearch)} search={selectedSearch} />
               <SearchRunPanel
-                canRunAll={searches.some((search) => search.enabled)}
+                canRunAll={hasActiveSession && searches.some((search) => search.enabled)}
+                hasActiveSession={hasActiveSession}
                 notice={runNotice}
                 onRunAll={() => void runAllSearches()}
                 onRun={(id) => void runSearch(id)}
@@ -118,6 +128,7 @@ function SearchesWorkspace() {
       </Row>
 
       <SearchWizardDrawer
+        hasActiveSession={hasActiveSession}
         onHide={() => setDrawerOpen(false)}
         search={editingSearch}
         show={drawerOpen}
@@ -128,8 +139,10 @@ function SearchesWorkspace() {
 
 export function SearchesPage() {
   return (
-    <SearchesProvider>
-      <SearchesWorkspace />
-    </SearchesProvider>
+    <ProvidersProvider>
+      <SearchesProvider>
+        <SearchesWorkspace />
+      </SearchesProvider>
+    </ProvidersProvider>
   );
 }

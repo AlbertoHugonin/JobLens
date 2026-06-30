@@ -1,8 +1,10 @@
 # Provider architecture & sessions
 
 JobLens collects jobs from pluggable **providers**. LinkedIn is the first one;
-the design keeps everything provider-agnostic so adding Indeed (or others) is a
-matter of writing one plugin.
+the design keeps everything provider-agnostic, but LinkedIn is the only provider
+registered and operational in the current application. Adding Indeed or another
+source still requires a real provider plugin plus DB seed, worker collector, and
+UI support.
 
 ## Minimal session credentials
 
@@ -66,6 +68,10 @@ a fallback by both the API summary and the worker.
 live call (`/voyager/api/me` for LinkedIn) and marks the session `active` or
 `expired` without exposing secrets.
 
+`DELETE /api/v1/providers/:providerKey/sessions/:sessionId` removes a stored
+session (404 if it is missing). **Settings → Sessioni** lists the saved sessions
+and exposes add (modal) / verify / remove (with confirmation) for each.
+
 ## Adding a new provider
 
 1. **API** — create `apps/api/src/providers/<key>.ts` exporting a
@@ -74,7 +80,6 @@ live call (`/voyager/api/me` for LinkedIn) and marks the session `active` or
    `summarizeSession`, and optionally `buildSessionFromHar` / `debugHar` /
    `verifySession`. Register it in `apps/api/src/providers/registry.ts`.
    The generic routes and the dynamic credential form pick it up automatically.
-   `apps/api/src/providers/indeed.ts` is a working skeleton example.
 2. **DB** — add a seed row in `providers` (`provider_key`, `name`, `enabled`).
 3. **Worker** — add a collector under `apps/worker/src/providers/<key>/` and a
    handler/dispatch entry, reusing the same `session_data` envelope shape.

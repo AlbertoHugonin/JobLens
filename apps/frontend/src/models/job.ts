@@ -118,6 +118,7 @@ export interface JobExport {
   job: Record<string, unknown>;
   latestDescription: JobDescription | null;
   latestReview: JobReviewSummary | null;
+  reviews: JobReviewDetail[];
   searches: JobSearchPresence[];
 }
 
@@ -177,7 +178,9 @@ export const jobWorkplaceModeOptions: Array<{ label: string; value: JobWorkplace
 export function createDefaultJobFilters(): JobFilters {
   return {
     availabilityStatus: 'active',
-    decision: ['apply', 'maybe'],
+    // Default to no AI-decision filter so every offer is visible from the start,
+    // including those not yet reviewed by the AI. Users can narrow down after.
+    decision: [],
     localStatus: 'new',
     location: '',
     modelName: '',

@@ -21,12 +21,24 @@ export interface AiPauseWindowDto {
   startTime: string;
 }
 
+export type AiReviewOutputLanguageDto = 'en' | 'it' | 'job_language' | 'profile_language';
+
+export interface AiReviewFieldDto {
+  description: string;
+  enabled: boolean;
+  key: string;
+  label: string;
+  maxItems: number;
+}
+
 export interface AiSettingsDto {
   activeEndpointId: string | null;
   candidateProfile: string;
   enabled: boolean;
   evaluationRules: string;
+  outputLanguage: AiReviewOutputLanguageDto;
   pauses: AiPauseWindowDto[];
+  reviewFields: AiReviewFieldDto[];
   rulesTemplate: string;
   rulesTemplateVersion: number;
   runtime: AiRuntimeSettingsDto;
@@ -60,7 +72,9 @@ export interface AiSettingsUpdateInput {
   candidateProfile?: string | undefined;
   enabled?: boolean | undefined;
   evaluationRules?: string | undefined;
+  outputLanguage?: AiReviewOutputLanguageDto | undefined;
   pauses?: AiPauseWindowDto[] | undefined;
+  reviewFields?: AiReviewFieldDto[] | undefined;
   runtime?: Partial<AiRuntimeSettingsDto> | undefined;
 }
 
@@ -215,9 +229,7 @@ export function fetchAiEndpointHealth(id: string): Promise<ApiSuccessDto<AiEndpo
   return apiRequest<ApiSuccessDto<AiEndpointHealthDto>>(`/api/v1/ai/endpoints/${id}/health`);
 }
 
-export function probeAiEndpointUrl(
-  baseUrl: string,
-): Promise<ApiSuccessDto<AiEndpointProbeDto>> {
+export function probeAiEndpointUrl(baseUrl: string): Promise<ApiSuccessDto<AiEndpointProbeDto>> {
   return apiRequest<ApiSuccessDto<AiEndpointProbeDto>>('/api/v1/ai/endpoints/probe', {
     body: JSON.stringify({ baseUrl }),
     headers: {
@@ -235,9 +247,7 @@ export function fetchAiModels(endpointId?: string): Promise<ApiSuccessDto<AiMode
   );
 }
 
-export function syncAiModels(
-  input: AiModelSyncInput = {},
-): Promise<ApiSuccessDto<AiModelDto[]>> {
+export function syncAiModels(input: AiModelSyncInput = {}): Promise<ApiSuccessDto<AiModelDto[]>> {
   return apiRequest<ApiSuccessDto<AiModelDto[]>>('/api/v1/ai/models/sync', {
     body: JSON.stringify(input),
     headers: {

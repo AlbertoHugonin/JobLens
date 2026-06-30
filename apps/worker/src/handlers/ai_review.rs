@@ -8,13 +8,17 @@ use tokio::{sync::watch, time::sleep};
 use crate::{
     activities::{
         ClaimedActivity, HeartbeatOutcome, heartbeat_activity, insert_activity_log,
-        mark_activity_cancelled, mark_activity_interrupted, mark_activity_succeeded,
+        mark_activity_cancelled, mark_activity_failed, mark_activity_interrupted,
+        mark_activity_succeeded,
     },
     ai::{
-        client::{AiCompletion, AiRuntime, request_ai_review},
+        client::{AiCompletion, AiRequestError, AiRuntime, request_ai_review},
+        queue::set_ai_review_cooldown,
         review::{
-            NormalizedReview, ReviewExternalJob, ReviewJobContext, build_review_prompt,
-            diagnostic_review, hash_text, normalize_review_output,
+            NormalizedReview, ReviewExternalJob, ReviewField, ReviewJobContext,
+            ReviewOutputLanguage, build_review_prompt, diagnostic_review, hash_text,
+            normalize_review_fields, normalize_review_output, normalize_review_output_language,
+            review_fields_json, review_json_schema,
         },
     },
     config::WorkerConfig,
@@ -27,6 +31,8 @@ struct AiReviewSettings {
     active_endpoint_id: Option<String>,
     candidate_profile: String,
     evaluation_rules: String,
+    output_language: ReviewOutputLanguage,
+    review_fields: Vec<ReviewField>,
     runtime: Value,
 }
 
@@ -55,14 +61,28 @@ Constraints: evaluate location, seniority, stack and role clarity before applyin
 
 const DEFAULT_EVALUATION_RULES: &str = "\
 Decision:
-- apply: strong match with role, skills and constraints.
-- maybe: interesting potential with gaps or missing information.
-- reject: clear incompatibility or substantial blockers.
+- apply: strong match with the role, required skills, constraints and candidate goals.
+- maybe: potentially interesting role with manageable gaps or missing information.
+- reject: clear mismatch, hard constraint conflict or substantial blockers.
 
 Score:
-- 80-100 for a strong match and few risks.
-- 50-79 for partial match or manageable uncertainty.
-- 0-49 for weak fit or blockers.";
+- 80-100 for a strong fit with few risks.
+- 50-79 for a partial fit or manageable uncertainty.
+- 0-49 for weak fit, hard blockers or major missing requirements.
+
+Requirement handling:
+- First distinguish mandatory/core requirements from preferred/optional requirements and learnable/training-only items.
+- Treat phrases such as preferred, plus, nice to have, bonus, helpful, useful or good to have as optional unless the offer clearly marks them as mandatory.
+- Do not turn optional, preferred or learnable items into blockers or mandatory_gaps.
+
+Field rules:
+- blockers: only true deal-breakers.
+- mandatory_gaps: only missing mandatory/core requirements.
+- caution_notes: real but non-blocking concerns, weak evidence or partial fit.
+- matching_points: direct matches between the candidate profile and the offer.
+- explicit_optional_matches: optional/preferred items explicitly mentioned in the offer and present in the profile.
+- Do not invent candidate skills or experience. If a skill is only basic or academic, say so.
+- Fill blockers, matching_points, explicit_optional_matches, mandatory_gaps and caution_notes with concrete evidence from the offer.";
 
 pub(crate) async fn run_ai_review_activity(
     pool: &PgPool,
@@ -98,10 +118,20 @@ pub(crate) async fn run_ai_review_activity(
         &target.settings.candidate_profile,
         &target.settings.evaluation_rules,
         &target.job,
+        target.settings.output_language,
+        &target.settings.review_fields,
     );
     let profile_hash = hash_text(&target.settings.candidate_profile);
-    let rules_hash = hash_text(&target.settings.evaluation_rules);
+    let rules_hash = hash_text(
+        &json!({
+            "evaluationRules": target.settings.evaluation_rules,
+            "outputLanguage": target.settings.output_language.as_key(),
+            "reviewFields": review_fields_json(&target.settings.review_fields),
+        })
+        .to_string(),
+    );
     let runtime = AiRuntime::from_value(&target.settings.runtime);
+    let response_schema = review_json_schema(&target.settings.review_fields);
 
     if !advance_review_activity(
         pool,
@@ -120,15 +150,22 @@ pub(crate) async fn run_ai_review_activity(
         return Ok(());
     }
 
-    let completion = request_ai_review_with_retry(
+    let completion = match request_ai_review_with_retry(
         pool,
         &activity.id,
         &target,
         &prompt,
         &runtime,
+        &response_schema,
         &activity.payload,
     )
-    .await;
+    .await
+    {
+        Ok(completion) => completion,
+        Err(error) => {
+            return handle_failed_review(pool, config, metrics, activity, &target, error).await;
+        }
+    };
 
     if !advance_review_activity(
         pool,
@@ -147,26 +184,14 @@ pub(crate) async fn run_ai_review_activity(
         return Ok(());
     }
 
-    let (review, raw_output, ai_metrics) = match completion {
-        Ok(completion) => {
-            let review = normalize_review_output(&completion.raw_output);
-            (review, Some(completion.raw_output), completion.metrics)
-        }
-        Err(error) => (
-            diagnostic_review(&format!("{error:#}")),
-            None,
-            json!({
-                "requestFailed": true,
-            }),
-        ),
-    };
+    let review = normalize_review_output(&completion.raw_output, &target.settings.review_fields);
     let review_id = insert_job_review(
         pool,
         &target,
         JobReviewInsert {
-            ai_metrics,
+            ai_metrics: completion.metrics,
             profile_hash: &profile_hash,
-            raw_output: raw_output.as_deref(),
+            raw_output: Some(&completion.raw_output),
             review: &review,
             rules_hash: &rules_hash,
             source_activity_id: &activity.id,
@@ -204,6 +229,201 @@ pub(crate) async fn run_ai_review_activity(
     .await?;
     mark_activity_succeeded(pool, config, &activity.id).await?;
     metrics.activities_succeeded.fetch_add(1, Ordering::Relaxed);
+
+    Ok(())
+}
+
+/// Decide what to do when the AI call ultimately fails.
+///
+/// - endpoint unreachable: re-queue and pause ai_review claiming for a cooldown,
+///   without counting it as an attempt — the queue waits for the endpoint to
+///   return and resumes automatically.
+/// - other failures: re-queue (also behind a cooldown) up to a capped number of
+///   attempts; once exhausted, store a diagnostic review and mark the activity
+///   failed so it stops cycling.
+async fn handle_failed_review(
+    pool: &PgPool,
+    config: &WorkerConfig,
+    metrics: &WorkerMetrics,
+    activity: &ClaimedActivity,
+    target: &AiReviewTarget,
+    error: AiRequestError,
+) -> Result<()> {
+    let message = error.message();
+
+    if error.is_unreachable() {
+        set_ai_review_cooldown(pool, config.ai_review_cooldown).await?;
+        insert_activity_log(
+            pool,
+            &activity.id,
+            "warn",
+            "AI endpoint unreachable; review re-queued until it is back online",
+            json!({
+                "cooldownSeconds": config.ai_review_cooldown.as_secs(),
+                "error": message,
+                "jobId": target.job.id,
+            }),
+        )
+        .await?;
+        requeue_ai_review(
+            pool,
+            config,
+            activity,
+            None,
+            "waiting_ai_endpoint",
+            "In attesa che l'endpoint AI torni online",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let attempts = read_ai_review_attempts(&activity.payload).saturating_add(1);
+    if attempts < config.ai_review_max_attempts {
+        set_ai_review_cooldown(pool, config.ai_review_cooldown).await?;
+        insert_activity_log(
+            pool,
+            &activity.id,
+            "warn",
+            "AI review failed; re-queued for another attempt",
+            json!({
+                "attempt": attempts,
+                "cooldownSeconds": config.ai_review_cooldown.as_secs(),
+                "error": message,
+                "jobId": target.job.id,
+                "maxAttempts": config.ai_review_max_attempts,
+            }),
+        )
+        .await?;
+        requeue_ai_review(
+            pool,
+            config,
+            activity,
+            Some(attempts),
+            "retry_after_error",
+            &format!(
+                "Valutazione AI fallita (tentativo {attempts}/{}), riprovo a breve",
+                config.ai_review_max_attempts
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Out of attempts: keep a diagnostic record and stop cycling.
+    let review = diagnostic_review(&message);
+    let review_id = insert_job_review(
+        pool,
+        target,
+        JobReviewInsert {
+            ai_metrics: json!({ "attempts": attempts, "requestFailed": true }),
+            profile_hash: &hash_text(&target.settings.candidate_profile),
+            raw_output: None,
+            review: &review,
+            rules_hash: &hash_text(
+                &json!({
+                    "evaluationRules": target.settings.evaluation_rules,
+                    "outputLanguage": target.settings.output_language.as_key(),
+                    "reviewFields": review_fields_json(&target.settings.review_fields),
+                })
+                .to_string(),
+            ),
+            source_activity_id: &activity.id,
+        },
+    )
+    .await?;
+    insert_activity_log(
+        pool,
+        &activity.id,
+        "error",
+        "AI review failed after retries; stored diagnostic review",
+        json!({
+            "attempts": attempts,
+            "error": message,
+            "jobId": target.job.id,
+            "reviewId": review_id,
+        }),
+    )
+    .await?;
+    mark_activity_failed(pool, config, &activity.id, &message).await?;
+    metrics.activities_failed.fetch_add(1, Ordering::Relaxed);
+
+    Ok(())
+}
+
+fn read_ai_review_attempts(payload: &Value) -> u32 {
+    payload
+        .get("aiReviewAttempts")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0)
+}
+
+async fn requeue_ai_review(
+    pool: &PgPool,
+    config: &WorkerConfig,
+    activity: &ClaimedActivity,
+    attempts: Option<u32>,
+    phase: &str,
+    message: &str,
+) -> Result<()> {
+    let result = match attempts {
+        Some(attempts) => {
+            sqlx::query(
+                r#"
+                UPDATE activities
+                SET
+                  status = 'queued',
+                  phase = $3,
+                  message = $4,
+                  payload = COALESCE(payload, '{}'::jsonb)
+                    || jsonb_build_object('aiReviewAttempts', $5::int),
+                  lease_owner = NULL,
+                  lease_expires_at = NULL,
+                  heartbeat_at = now(),
+                  queued_at = now()
+                WHERE id = $1::uuid
+                  AND lease_owner = $2
+                "#,
+            )
+            .bind(&activity.id)
+            .bind(&config.worker_id)
+            .bind(phase)
+            .bind(message)
+            .bind(i32::try_from(attempts).unwrap_or(i32::MAX))
+            .execute(pool)
+            .await
+        }
+        None => {
+            sqlx::query(
+                r#"
+                UPDATE activities
+                SET
+                  status = 'queued',
+                  phase = $3,
+                  message = $4,
+                  lease_owner = NULL,
+                  lease_expires_at = NULL,
+                  heartbeat_at = now(),
+                  queued_at = now()
+                WHERE id = $1::uuid
+                  AND lease_owner = $2
+                "#,
+            )
+            .bind(&activity.id)
+            .bind(&config.worker_id)
+            .bind(phase)
+            .bind(message)
+            .execute(pool)
+            .await
+        }
+    }
+    .context("re-queue AI review failed")?;
+
+    if result.rows_affected() == 0 {
+        return Err(anyhow!(
+            "activity lease was lost while re-queuing AI review"
+        ));
+    }
 
     Ok(())
 }
@@ -338,11 +558,20 @@ async fn read_ai_review_settings(pool: &PgPool) -> Result<AiReviewSettings> {
     let runtime = read_setting_value(pool, "ai.runtime")
         .await?
         .unwrap_or_else(|| json!({}));
+    let output_language = normalize_review_output_language(
+        read_setting_value(pool, "ai.review_output_language")
+            .await?
+            .as_ref(),
+    );
+    let review_fields =
+        normalize_review_fields(read_setting_value(pool, "ai.review_fields").await?.as_ref());
 
     Ok(AiReviewSettings {
         active_endpoint_id,
         candidate_profile,
         evaluation_rules,
+        output_language,
+        review_fields,
         runtime,
     })
 }
@@ -629,20 +858,22 @@ async fn request_ai_review_with_retry(
     target: &AiReviewTarget,
     prompt: &str,
     runtime: &AiRuntime,
+    response_schema: &Value,
     payload: &Value,
-) -> Result<AiCompletion> {
+) -> Result<AiCompletion, AiRequestError> {
     let max_attempts = runtime.retry_attempts.saturating_add(1).max(1);
-    let mut last_error = None;
+    let mut last_error: Option<AiRequestError> = None;
 
     for attempt in 1..=max_attempts {
         let completion = match read_fixture_completion(payload, attempt) {
-            Some(completion) => completion,
+            Some(result) => result.map_err(AiRequestError::Failed),
             None => {
                 request_ai_review(
                     &target.endpoint_base_url,
                     &target.model_name,
                     prompt,
                     runtime,
+                    response_schema,
                 )
                 .await
             }
@@ -670,6 +901,7 @@ async fn request_ai_review_with_retry(
             }
             Err(error) => {
                 let retryable = attempt < max_attempts;
+                let message = error.message();
                 insert_activity_log(
                     pool,
                     activity_id,
@@ -683,7 +915,7 @@ async fn request_ai_review_with_retry(
                         "attempt": attempt,
                         "maxAttempts": max_attempts,
                         "retryDelaySeconds": runtime.retry_delay_seconds,
-                        "error": format!("{error:#}"),
+                        "error": message,
                     }),
                 )
                 .await?;
@@ -696,7 +928,7 @@ async fn request_ai_review_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow!("AI review request failed")))
+    Err(last_error.unwrap_or_else(|| AiRequestError::Failed(anyhow!("AI review request failed"))))
 }
 
 pub(crate) fn read_fixture_completion(
@@ -760,6 +992,8 @@ async fn insert_job_review(
         "ai": input.ai_metrics,
         "endpointName": target.endpoint_name,
         "mode": target.mode,
+        "outputLanguage": target.settings.output_language.as_key(),
+        "reviewFields": review_fields_json(&target.settings.review_fields),
         "sourceActivityId": input.source_activity_id,
     });
     let row = sqlx::query(

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import type { DatabasePool } from '../db/pool.js';
-import { badRequest, notFound, serviceUnavailable } from '../http/errors.js';
+import { badRequest, conflict, notFound, serviceUnavailable } from '../http/errors.js';
 import { ok, successResponseSchema } from '../http/responses.js';
 import { activitySchema } from './activities.js';
 import {
@@ -14,6 +14,7 @@ import {
   createLinkedInCollectionActivities,
   createLinkedInCollectionActivity,
 } from '../repositories/activitiesRepository.js';
+import { hasActiveProviderSession } from '../repositories/providerSessionsRepository.js';
 import {
   createSearch,
   deleteSearch,
@@ -21,6 +22,15 @@ import {
   readSearch,
   updateSearch,
 } from '../repositories/searchesRepository.js';
+
+const NO_ACTIVE_SESSION_MESSAGE =
+  'Nessuna sessione LinkedIn attiva: collega una sessione prima di avviare la raccolta.';
+
+async function requireActiveLinkedInSession(pool: DatabasePool): Promise<void> {
+  if (!(await hasActiveProviderSession(pool, LINKEDIN_PROVIDER_KEY))) {
+    throw conflict(NO_ACTIVE_SESSION_MESSAGE);
+  }
+}
 
 interface SearchListQuery {
   limit?: number | undefined;
@@ -400,6 +410,7 @@ export async function registerSearchesRoutes(
 
       const { all, searchIds } = normalizeRunSearchesBody(request.body);
       const pool = requireDatabase(db);
+      await requireActiveLinkedInSession(pool);
       const result = await createLinkedInCollectionActivities(pool, {
         searchIds: all ? undefined : searchIds,
       });
@@ -420,6 +431,7 @@ export async function registerSearchesRoutes(
     },
     async (request, reply) => {
       const pool = requireDatabase(db);
+      await requireActiveLinkedInSession(pool);
       const activity = await createLinkedInCollectionActivity(pool, request.params.id);
 
       if (!activity) {

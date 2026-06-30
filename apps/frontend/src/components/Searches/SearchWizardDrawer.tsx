@@ -22,7 +22,11 @@ import {
 import { ErrorState } from '../Utilities/SectionState';
 import { LinkedInSearchForm } from './LinkedInSearchForm';
 
-function toggleScheduleDay(schedule: SearchScheduleConfig, day: number, checked: boolean): number[] {
+function toggleScheduleDay(
+  schedule: SearchScheduleConfig,
+  day: number,
+  checked: boolean,
+): number[] {
   if (checked) {
     return Array.from(new Set([...schedule.activeDays, day])).sort((left, right) => left - right);
   }
@@ -37,10 +41,12 @@ function readScheduleNumber(value: string, fallback: number, min: number): numbe
 }
 
 export function SearchWizardDrawer({
+  hasActiveSession,
   onHide,
   search,
   show,
 }: {
+  hasActiveSession: boolean;
   onHide: () => void;
   search: Search | null;
   show: boolean;
@@ -141,9 +147,21 @@ export function SearchWizardDrawer({
             <div className="row g-3">
               <Form.Group className="col-md-6" controlId="search-provider">
                 <Form.Label>Provider</Form.Label>
-                <Form.Select disabled value="linkedin">
-                  <option value="linkedin">LinkedIn</option>
-                </Form.Select>
+                {hasActiveSession ? (
+                  <Form.Select disabled value="linkedin">
+                    <option value="linkedin">LinkedIn</option>
+                  </Form.Select>
+                ) : (
+                  <>
+                    <Form.Select disabled value="">
+                      <option value="">Nessun provider disponibile</option>
+                    </Form.Select>
+                    <Form.Text className="text-warning">
+                      Nessuna sessione LinkedIn attiva: collega una sessione in Impostazioni per
+                      usare il provider.
+                    </Form.Text>
+                  </>
+                )}
               </Form.Group>
               <Form.Group className="col-md-6" controlId="search-enabled">
                 <Form.Label>Stato</Form.Label>
@@ -287,14 +305,18 @@ export function SearchWizardDrawer({
                       <Form.Check
                         checked={draft.scheduleConfig.inactiveWindow.enabled}
                         label="Fascia inattiva"
-                        onChange={(event) => updateInactiveWindow({ enabled: event.target.checked })}
+                        onChange={(event) =>
+                          updateInactiveWindow({ enabled: event.target.checked })
+                        }
                         type="switch"
                       />
                     </Form.Group>
                     <Form.Group className="col-md-4" controlId="search-schedule-inactive-start">
                       <Form.Label>Inizio</Form.Label>
                       <Form.Control
-                        onChange={(event) => updateInactiveWindow({ startTime: event.target.value })}
+                        onChange={(event) =>
+                          updateInactiveWindow({ startTime: event.target.value })
+                        }
                         type="time"
                         value={draft.scheduleConfig.inactiveWindow.startTime}
                       />
@@ -335,7 +357,12 @@ export function SearchWizardDrawer({
           {previewing ? <Spinner animation="border" className="me-2" size="sm" /> : null}
           Preview URL
         </Button>
-        <Button disabled={saving} onClick={() => void handleSave()} variant="primary">
+        <Button
+          disabled={saving || !hasActiveSession}
+          onClick={() => void handleSave()}
+          title={hasActiveSession ? undefined : 'Collega una sessione LinkedIn attiva per salvare'}
+          variant="primary"
+        >
           {saving ? <Spinner animation="border" className="me-2" size="sm" /> : null}
           {search ? 'Aggiorna' : 'Salva ricerca'}
         </Button>
