@@ -586,7 +586,27 @@ h6,
 }
 
 .job-list .list-group-item {
-  min-height: 4.85rem;
+  min-height: auto;
+  padding-bottom: 0.72rem;
+  padding-left: 0.85rem;
+  padding-right: 1.65rem;
+  padding-top: 0.72rem;
+  position: relative;
+}
+
+.job-list-row {
+  min-width: 0;
+}
+
+.job-local-status-dot {
+  border-radius: 50%;
+  height: 0.45rem;
+  pointer-events: none;
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0.45rem;
 }
 
 .job-description,
@@ -599,8 +619,12 @@ h6,
 }
 
 .job-list-title {
+  display: -webkit-box;
   line-height: 1.25;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .job-list-meta {
@@ -610,6 +634,7 @@ h6,
      card when horizontal space is tight. */
   grid-template-columns: minmax(0, 1fr);
   gap: 0.05rem;
+  margin-top: 0.18rem;
   min-width: 0;
   white-space: nowrap;
 }
@@ -644,27 +669,27 @@ h6,
 }
 
 .job-detail-heading {
+  flex: 1 1 20rem;
   max-width: min(100%, 42rem);
 }
 
 .job-detail-title {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
+  display: block;
   line-height: 1.25;
 }
 
 .job-detail-title-text {
-  min-width: 0;
+  display: inline;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .job-detail-title-badge {
   align-items: center;
   display: inline-flex;
-  flex-shrink: 0;
   line-height: 1;
+  margin-left: 0.45rem;
+  vertical-align: 0.08rem;
 }
 
 .job-detail-title-badge .badge {

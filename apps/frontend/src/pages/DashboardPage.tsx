@@ -1,10 +1,12 @@
 import { useCallback, useState } from 'react';
 
-import { BriefcaseBusiness, CircleCheckBig, Gauge, Hourglass } from 'lucide-react';
+import { BriefcaseBusiness, CircleCheckBig, Gauge, Hourglass, Sparkles } from 'lucide-react';
+import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Col from 'react-bootstrap/Col';
 import ListGroup from 'react-bootstrap/ListGroup';
 import Row from 'react-bootstrap/Row';
+import Spinner from 'react-bootstrap/Spinner';
 import Stack from 'react-bootstrap/Stack';
 
 import { ServiceHealthPanel } from '../components/Health/ServiceHealthPanel';
@@ -14,15 +16,11 @@ import { Panel } from '../components/Layout/Panel';
 import { ScoreRing } from '../components/Layout/ScoreRing';
 import { StatCard } from '../components/Layout/StatCard';
 import { AsyncSection } from '../components/Utilities/AsyncSection';
-import { fetchJobInsights } from '../API/jobs';
+import { fetchJobInsights, requestBatchJobReviews } from '../API/jobs';
 import { useAppStatus } from '../contexts/AppStatusContext';
 import { useInitialLoad } from '../hooks/useInitialLoad';
-import {
-  getJobDecisionVariant,
-  type JobDecisionCount,
-  type JobInsights,
-} from '../models/job';
-import { normalizeJobInsights } from '../services/jobService';
+import { getJobDecisionVariant, type JobDecisionCount, type JobInsights } from '../models/job';
+import { normalizeBatchJobReviewResult, normalizeJobInsights } from '../services/jobService';
 
 const DECISION_META: Record<JobDecisionCount['key'], { label: string; variant: string }> = {
   apply: { label: 'Apply', variant: 'success' },
@@ -125,20 +123,46 @@ function AiPriorityPanel({
   error,
   insights,
   loading,
+  onQueueMissingReviews,
   onRefresh,
+  queueError,
+  queueNotice,
+  queueingMissingReviews,
 }: {
   error: string | null;
   insights: JobInsights | null;
   loading: boolean;
+  onQueueMissingReviews: () => void;
   onRefresh: () => void;
+  queueError: string | null;
+  queueNotice: string | null;
+  queueingMissingReviews: boolean;
 }) {
+  const canQueueMissingReviews =
+    Boolean(insights && insights.unreviewed > 0) && !loading && !queueingMissingReviews;
+
   return (
     <Panel
       title="Priorita AI"
       actions={
-        <Button disabled={loading} onClick={onRefresh} size="sm" variant="outline-secondary">
-          Aggiorna
-        </Button>
+        <>
+          <Button
+            disabled={!canQueueMissingReviews}
+            onClick={onQueueMissingReviews}
+            size="sm"
+            variant="outline-success"
+          >
+            {queueingMissingReviews ? (
+              <Spinner animation="border" className="me-2" size="sm" />
+            ) : (
+              <Sparkles aria-hidden="true" className="me-2" size={15} />
+            )}
+            Valuta mancanti
+          </Button>
+          <Button disabled={loading} onClick={onRefresh} size="sm" variant="outline-secondary">
+            Aggiorna
+          </Button>
+        </>
       }
     >
       <AsyncSection
@@ -148,6 +172,16 @@ function AiPriorityPanel({
       >
         {insights ? (
           <Stack className="gap-3">
+            {queueNotice ? (
+              <Alert className="mb-0 py-2" variant="success">
+                {queueNotice}
+              </Alert>
+            ) : null}
+            {queueError ? (
+              <Alert className="mb-0 py-2" variant="danger">
+                {queueError}
+              </Alert>
+            ) : null}
             <DecisionDistribution items={insights.byDecision} />
             {insights.topMatches.length === 0 ? (
               <p className="text-secondary mb-0">Nessuna offerta in evidenza al momento.</p>
@@ -187,10 +221,13 @@ function AiPriorityPanel({
 }
 
 export function DashboardPage() {
-  const { apiHealth, error, loadApiHealth, loading } = useAppStatus();
+  const { apiHealth, error, loadActivityPreview, loadApiHealth, loading } = useAppStatus();
   const [insights, setInsights] = useState<JobInsights | null>(null);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [loadingInsights, setLoadingInsights] = useState(false);
+  const [queueingMissingReviews, setQueueingMissingReviews] = useState(false);
+  const [reviewQueueError, setReviewQueueError] = useState<string | null>(null);
+  const [reviewQueueNotice, setReviewQueueNotice] = useState<string | null>(null);
 
   const loadInsights = useCallback(async () => {
     setLoadingInsights(true);
@@ -213,6 +250,29 @@ export function DashboardPage() {
     void loadApiHealth(true);
   }, [loadApiHealth]);
 
+  const queueMissingReviews = useCallback(async () => {
+    setQueueingMissingReviews(true);
+    try {
+      const response = await requestBatchJobReviews({
+        filters: {
+          decision: 'none',
+          scope: 'standard',
+        },
+        mode: 'automatic',
+      });
+      const result = normalizeBatchJobReviewResult(response.data);
+      setReviewQueueNotice(
+        `Review AI accodate: ${result.queued.length}. Saltate: ${result.skipped.length}.`,
+      );
+      setReviewQueueError(null);
+      await Promise.all([loadInsights(), loadActivityPreview(true)]);
+    } catch (caught: unknown) {
+      setReviewQueueError(caught instanceof Error ? caught.message : 'Unexpected error');
+    } finally {
+      setQueueingMissingReviews(false);
+    }
+  }, [loadActivityPreview, loadInsights]);
+
   return (
     <Stack className="app-page gap-4">
       <PageHeader description="Stato servizi e attivita recenti" title="Dashboard" />
@@ -233,7 +293,11 @@ export function DashboardPage() {
             error={insightsError}
             insights={insights}
             loading={loadingInsights}
+            onQueueMissingReviews={() => void queueMissingReviews()}
             onRefresh={() => void loadInsights()}
+            queueError={reviewQueueError}
+            queueNotice={reviewQueueNotice}
+            queueingMissingReviews={queueingMissingReviews}
           />
         </Col>
       </Row>

@@ -783,6 +783,28 @@ export async function createAiReviewActivity(
   }
 }
 
+export async function hasPendingAiReviewActivity(
+  pool: DatabasePool,
+  input: { jobId: string; modelName: string },
+): Promise<boolean> {
+  const result = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM activities
+        WHERE activity_type = 'ai_review'
+          AND subject_type = 'job'
+          AND subject_id = $1::uuid
+          AND status IN ('queued', 'running', 'interrupted')
+          AND payload->>'modelName' = $2
+      ) AS exists
+    `,
+    [input.jobId, input.modelName],
+  );
+
+  return result.rows[0]?.exists === true;
+}
+
 export async function createExportActivity(
   pool: DatabasePool,
   input: {

@@ -1591,6 +1591,32 @@ describe('database migrations', () => {
       `,
       [jobIds[0], endpointId],
     );
+    await pool.query(
+      `
+        INSERT INTO activities(
+          activity_type,
+          status,
+          subject_type,
+          subject_id,
+          payload
+        )
+        VALUES (
+          'ai_review',
+          'queued',
+          'job',
+          $1,
+          $2::jsonb
+        )
+      `,
+      [
+        jobIds[1],
+        JSON.stringify({
+          jobId: jobIds[1],
+          mode: 'automatic',
+          modelName: 'm13-filter-model',
+        }),
+      ],
+    );
 
     const app = await buildApp(readConfig({ NODE_ENV: 'test', API_RUN_MIGRATIONS: 'false' }), {
       db: pool,
@@ -1611,6 +1637,10 @@ describe('database migrations', () => {
     );
 
     await app.close();
+    await pool.query(
+      "DELETE FROM activities WHERE activity_type = 'ai_review' AND subject_id = $1",
+      [jobIds[1]],
+    );
     await pool.query('DELETE FROM activity_logs WHERE activity_id = ANY($1::uuid[])', [
       activityIds,
     ]);
@@ -1626,17 +1656,21 @@ describe('database migrations', () => {
     await pool.query("DELETE FROM settings WHERE key = 'ai.runtime'");
 
     expect(filteredBatch.statusCode).toBe(202);
-    expect(filteredBatch.json().data.queued).toHaveLength(29);
-    expect(filteredBatch.json().data.skipped).toEqual([
-      { jobId: jobIds[0], reason: 'already_reviewed_with_automatic_model' },
-    ]);
+    expect(filteredBatch.json().data.queued).toHaveLength(28);
+    expect(filteredBatch.json().data.skipped).toHaveLength(2);
+    expect(filteredBatch.json().data.skipped).toEqual(
+      expect.arrayContaining([
+        { jobId: jobIds[0], reason: 'already_reviewed_with_automatic_model' },
+        { jobId: jobIds[1], reason: 'already_queued_for_model' },
+      ]),
+    );
     expect(
       new Set(
         filteredBatch
           .json()
           .data.queued.map((activity: { subjectId: string }) => activity.subjectId),
       ).size,
-    ).toBe(29);
+    ).toBe(28);
   }, 30_000);
 
   it('queues debug/export activities, benchmarks models, and deletes reviews by model', async () => {

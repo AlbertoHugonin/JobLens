@@ -133,7 +133,7 @@ export function JobList({
                 className={railClass(job)}
                 onClick={() => onSelect(job.id)}
               >
-                <Stack direction="horizontal" className="align-items-center gap-3">
+                <div className="job-list-row">
                   <div className="min-w-0 flex-grow-1">
                     <div className="job-list-title fw-semibold" title={job.title}>
                       {job.title}
@@ -161,11 +161,10 @@ export function JobList({
                   </div>
                   <span
                     aria-label={`Stato: ${statusLabel}`}
-                    className={`d-inline-block flex-shrink-0 rounded-circle bg-${getJobLocalStatusVariant(job.localStatus)}`}
-                    style={{ height: 10, width: 10 }}
+                    className={`job-local-status-dot bg-${getJobLocalStatusVariant(job.localStatus)}`}
                     title={statusLabel}
                   />
-                </Stack>
+                </div>
               </ListGroup.Item>
             );
           })}

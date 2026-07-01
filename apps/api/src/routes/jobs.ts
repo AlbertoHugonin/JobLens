@@ -4,7 +4,11 @@ import type { DatabasePool } from '../db/pool.js';
 import { badRequest, notFound, serviceUnavailable } from '../http/errors.js';
 import { ok, successResponseSchema } from '../http/responses.js';
 import { activitySchema } from './activities.js';
-import { createAiReviewActivity, type AiReviewMode } from '../repositories/activitiesRepository.js';
+import {
+  createAiReviewActivity,
+  hasPendingAiReviewActivity,
+  type AiReviewMode,
+} from '../repositories/activitiesRepository.js';
 import {
   readAiEndpoint,
   readAiModelByName,
@@ -706,6 +710,15 @@ export async function registerJobsRoutes(
 
       for (const jobId of candidateIds) {
         if (mode === 'automatic' && !force) {
+          const alreadyQueued = await hasPendingAiReviewActivity(pool, {
+            jobId,
+            modelName: target.modelName,
+          });
+          if (alreadyQueued) {
+            skipped.push({ jobId, reason: 'already_queued_for_model' });
+            continue;
+          }
+
           const alreadyReviewed = await hasSuccessfulAutomaticJobReview(pool, {
             jobId,
             modelName: target.modelName,
