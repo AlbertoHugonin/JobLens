@@ -4,6 +4,16 @@ import { buildApp } from '../src/app.js';
 import { readConfig } from '../src/config.js';
 
 describe('health routes', () => {
+  it('reads the debug backup upload limit from configuration', () => {
+    expect(
+      readConfig({
+        API_DEBUG_BACKUP_BODY_LIMIT_MB: '128',
+        API_RUN_MIGRATIONS: 'false',
+        NODE_ENV: 'test',
+      }).debugBackupBodyLimitBytes,
+    ).toBe(128 * 1024 * 1024);
+  });
+
   it('returns API health status', async () => {
     const app = await buildApp(readConfig({ API_RUN_MIGRATIONS: 'false', NODE_ENV: 'test' }));
     const response = await app.inject({

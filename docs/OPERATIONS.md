@@ -16,6 +16,7 @@ full list with defaults). Copy it to `.env` and adjust as needed.
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | PostgreSQL credentials and host port. |
 | `DATABASE_URL` | Connection string used by the API and worker. |
 | `API_PORT`, `API_CORS_ORIGIN`, `API_RUN_MIGRATIONS` | API port, allowed CORS origin, and whether migrations run on startup. |
+| `API_DEBUG_BACKUP_BODY_LIMIT_MB` | Maximum JSON request body accepted by selective debug backup import/export routes, in MiB (default `256`). Raise it when importing very large backups with many saved descriptions. |
 | `FRONTEND_PORT`, `VITE_API_BASE_URL` | Frontend host port and the API URL baked into the build. |
 | `WORKER_PORT`, `WORKER_RUN_LOOP`, `WORKER_POLL_MS`, `WORKER_HEARTBEAT_MS`, `WORKER_LEASE_SECONDS` | Worker port and loop tuning. |
 | `WORKER_LINKEDIN_PAGE_DELAY_MS` | LinkedIn collection-page pacing in ms (default `1200`; `0` disables pacing). |

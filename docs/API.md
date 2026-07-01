@@ -149,7 +149,8 @@ Both export and import require a non-empty `sections` array. Allowed sections ar
 `mode` is `merge` or `replace` and defaults to `merge` when omitted. `replace`
 deletes only the selected sections before importing. Import responses return
 per-section `deleted`, `imported`, and `skipped` counts. Backups that include
-`providerSessions` contain provider secrets.
+`providerSessions` contain provider secrets. The maximum accepted request body
+is controlled by `API_DEBUG_BACKUP_BODY_LIMIT_MB` and defaults to 256 MiB.
 
 ## Worker metrics
 

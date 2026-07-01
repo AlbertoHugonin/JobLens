@@ -43,7 +43,7 @@ export async function buildApp(
   await registerProviderRoutes(app, dependencies.db);
   await registerSearchesRoutes(app, dependencies.db);
   await registerJobsRoutes(app, dependencies.db);
-  await registerMaintenanceRoutes(app, dependencies.db);
+  await registerMaintenanceRoutes(app, dependencies.db, config.debugBackupBodyLimitBytes);
   await registerActivitiesRoutes(app, dependencies.db);
   await registerEventRoutes(app, dependencies.db);
 

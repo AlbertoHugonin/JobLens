@@ -127,6 +127,7 @@ function translateBackupError(error: unknown): never {
 export async function registerMaintenanceRoutes(
   app: FastifyInstance,
   db: DatabasePool | undefined,
+  debugBackupBodyLimitBytes: number,
 ): Promise<void> {
   app.post(
     '/api/v1/exports/jobs-reviews',
@@ -169,7 +170,7 @@ export async function registerMaintenanceRoutes(
   app.post<{ Body: BackupExportBody }>(
     '/api/v1/debug/backup/export',
     {
-      bodyLimit: 30 * 1024 * 1024,
+      bodyLimit: debugBackupBodyLimitBytes,
       schema: {
         body: {
           type: 'object',
@@ -203,7 +204,7 @@ export async function registerMaintenanceRoutes(
   app.post<{ Body: BackupImportBody }>(
     '/api/v1/debug/backup/import',
     {
-      bodyLimit: 30 * 1024 * 1024,
+      bodyLimit: debugBackupBodyLimitBytes,
       schema: {
         body: {
           type: 'object',

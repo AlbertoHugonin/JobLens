@@ -1,6 +1,7 @@
 export interface ApiConfig {
   corsOrigin: string;
   databaseUrl: string | null;
+  debugBackupBodyLimitBytes: number;
   host: string;
   logLevel: string;
   nodeEnv: string;
@@ -26,10 +27,16 @@ function readBoolean(value: string | undefined, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+function readMegabytes(value: string | undefined, fallback: number): number {
+  const megabytes = readNumber(value, fallback);
+  return megabytes > 0 ? megabytes * 1024 * 1024 : fallback * 1024 * 1024;
+}
+
 export function readConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   return {
     corsOrigin: env.API_CORS_ORIGIN ?? 'http://localhost:5173',
     databaseUrl: env.DATABASE_URL?.trim() || null,
+    debugBackupBodyLimitBytes: readMegabytes(env.API_DEBUG_BACKUP_BODY_LIMIT_MB, 256),
     host: env.API_HOST ?? env.HOST ?? '0.0.0.0',
     logLevel: env.LOG_LEVEL ?? 'info',
     nodeEnv: env.NODE_ENV ?? 'development',

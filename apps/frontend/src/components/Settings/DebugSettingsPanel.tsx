@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import Alert from 'react-bootstrap/Alert';
+import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
 import Card from 'react-bootstrap/Card';
 import Col from 'react-bootstrap/Col';
@@ -121,6 +122,9 @@ const BACKUP_PRESETS: Array<{
   },
 ];
 
+const DEFAULT_BACKUP_PRESET_KEY = 'jobs-searches';
+const CUSTOM_BACKUP_PRESET_KEY = 'custom';
+
 function readErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Errore imprevisto';
 }
@@ -134,10 +138,30 @@ function sortSections(sections: BackupSectionDto[]): BackupSectionDto[] {
   return BACKUP_SECTION_ORDER.filter((section) => selected.has(section));
 }
 
+function sameSections(left: BackupSectionDto[], right: BackupSectionDto[]): boolean {
+  const sortedLeft = sortSections(left);
+  const sortedRight = sortSections(right);
+  return (
+    sortedLeft.length === sortedRight.length &&
+    sortedLeft.every((section, index) => section === sortedRight[index])
+  );
+}
+
+function findPresetKey(sections: BackupSectionDto[]): string {
+  return (
+    BACKUP_PRESETS.find((preset) => sameSections(preset.sections, sections))?.key ??
+    CUSTOM_BACKUP_PRESET_KEY
+  );
+}
+
 export function DebugSettingsPanel() {
   const { debugMode, setDebugMode } = useDebugMode();
-  const [backupSections, setBackupSections] = useState<BackupSectionDto[]>(
-    BACKUP_PRESETS[1]?.sections ?? ['searches'],
+  const defaultBackupSections = BACKUP_PRESETS.find(
+    (preset) => preset.key === DEFAULT_BACKUP_PRESET_KEY,
+  )?.sections ?? ['searches'];
+  const [backupSections, setBackupSections] = useState<BackupSectionDto[]>(defaultBackupSections);
+  const [backupPresetKey, setBackupPresetKey] = useState(() =>
+    findPresetKey(defaultBackupSections),
   );
   const [backupMode, setBackupMode] = useState<BackupImportModeDto>('merge');
   const [backupBusy, setBackupBusy] = useState(false);
@@ -156,17 +180,21 @@ export function DebugSettingsPanel() {
 
   const selectedBackupSections = sortSections(backupSections);
   const selectedBackupSectionSet = new Set(selectedBackupSections);
+  const selectedBackupPreset = BACKUP_PRESETS.find((preset) => preset.key === backupPresetKey);
 
   const toggleBackupSection = (section: BackupSectionDto) => {
-    setBackupSections((current) =>
-      current.includes(section)
+    setBackupSections((current) => {
+      const next = current.includes(section)
         ? current.filter((item) => item !== section)
-        : sortSections([...current, section]),
-    );
+        : sortSections([...current, section]);
+      setBackupPresetKey(findPresetKey(next));
+      return next;
+    });
     setBackupError(null);
   };
 
   const applyBackupPreset = (presetKey: string) => {
+    setBackupPresetKey(presetKey);
     const preset = BACKUP_PRESETS.find((item) => item.key === presetKey);
     if (preset) {
       setBackupSections(preset.sections);
@@ -317,9 +345,9 @@ export function DebugSettingsPanel() {
                     <Form.Select
                       disabled={!debugMode || backupBusy}
                       onChange={(event) => applyBackupPreset(event.target.value)}
-                      value=""
+                      value={backupPresetKey}
                     >
-                      <option value="">Scegli preset</option>
+                      <option value={CUSTOM_BACKUP_PRESET_KEY}>Selezione personalizzata</option>
                       {BACKUP_PRESETS.map((preset) => (
                         <option key={preset.key} value={preset.key}>
                           {preset.label}
@@ -344,6 +372,16 @@ export function DebugSettingsPanel() {
                   </Form.Group>
                 </Col>
               </Row>
+              <div className="d-flex flex-wrap align-items-center gap-2 small text-secondary">
+                <span>Preset attivo</span>
+                <Badge bg={selectedBackupPreset ? 'primary' : 'secondary'}>
+                  {selectedBackupPreset?.label ?? 'Personalizzato'}
+                </Badge>
+                <span>
+                  {selectedBackupSections.length} sezion
+                  {selectedBackupSections.length === 1 ? 'e selezionata' : 'i selezionate'}
+                </span>
+              </div>
               <Row className="g-2">
                 {BACKUP_SECTIONS.map((section) => (
                   <Col md={6} key={section.key}>
