@@ -727,6 +727,7 @@ describe('database migrations', () => {
     );
     const providerId = provider.rows[0]?.id;
     expect(providerId).toBeTruthy();
+    await pool.query('UPDATE ai_endpoints SET is_active = false WHERE is_active = true');
 
     const search = await pool.query<{ id: string }>(
       `
@@ -2134,6 +2135,244 @@ describe('database migrations', () => {
     });
   }, 30_000);
 
+  it('exports and imports selected debug backup sections', async () => {
+    await runMigrations(pool);
+    const runId = `m15-${Date.now()}`;
+    const provider = await pool.query<{ id: string }>(
+      "SELECT id FROM providers WHERE provider_key = 'linkedin'",
+    );
+    const providerId = provider.rows[0]?.id;
+    expect(providerId).toBeTruthy();
+
+    await pool.query('UPDATE ai_endpoints SET is_active = false WHERE is_active = true');
+    const searchQuery = {
+      currentJobId: null,
+      distance: '25',
+      exactMatch: false,
+      experienceLevels: [],
+      geoId: '103350119',
+      keywords: `Backup ${runId}`,
+      location: 'Italy',
+      preservedParams: {},
+      providerKey: 'linkedin',
+      publicUrl: `https://www.linkedin.com/jobs/search/?keywords=Backup+${runId}&location=Italy`,
+      unsupportedParams: {},
+      workplaceTypes: [],
+    };
+    const search = await pool.query<{ id: string }>(
+      `
+        INSERT INTO searches(provider_id, name, query, enabled, schedule_config)
+        VALUES ($1, $2, $3::jsonb, true, '{"enabled":false}'::jsonb)
+        RETURNING id
+      `,
+      [providerId, `M15 Backup Search ${runId}`, JSON.stringify(searchQuery)],
+    );
+    const job = await pool.query<{ id: string }>(
+      `
+        INSERT INTO jobs(title, company_name, location_text, local_status, availability_status, metadata)
+        VALUES ($1, 'Backup Co', 'Remote', 'saved', 'active', '{"backup":true}'::jsonb)
+        RETURNING id
+      `,
+      [`M15 Backup Job ${runId}`],
+    );
+    await pool.query(
+      `
+        INSERT INTO external_jobs(provider_id, job_id, external_id, external_url, metadata)
+        VALUES ($1, $2, $3, $4, '{"backup":true}'::jsonb)
+      `,
+      [
+        providerId,
+        job.rows[0]?.id,
+        `m15-external-${runId}`,
+        `https://www.linkedin.com/jobs/view/${runId}/`,
+      ],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_search_presence(job_id, search_id, metadata)
+        VALUES ($1, $2, '{"backup":true}'::jsonb)
+      `,
+      [job.rows[0]?.id, search.rows[0]?.id],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_descriptions(job_id, content_hash, text, metadata)
+        VALUES ($1, $2, 'Backup description', '{"backup":true}'::jsonb)
+      `,
+      [job.rows[0]?.id, `m15-desc-${runId}`],
+    );
+    const endpoint = await pool.query<{ id: string }>(
+      `
+        INSERT INTO ai_endpoints(name, base_url, enabled, is_active, config)
+        VALUES ($1, 'http://127.0.0.1:11434', true, true, '{"backup":true}'::jsonb)
+        RETURNING id
+      `,
+      [`M15 Endpoint ${runId}`],
+    );
+    const model = await pool.query<{ id: string }>(
+      `
+        INSERT INTO ai_models(endpoint_id, name, installed, metadata)
+        VALUES ($1, $2, true, '{"backup":true}'::jsonb)
+        RETURNING id
+      `,
+      [endpoint.rows[0]?.id, `m15-model-${runId}`],
+    );
+    await pool.query(
+      `
+        INSERT INTO job_reviews(
+          job_id,
+          endpoint_id,
+          model_id,
+          model_name,
+          profile_hash,
+          rules_hash,
+          decision,
+          score,
+          result,
+          metrics
+        )
+        VALUES ($1, $2, $3, $4, 'profile', 'rules', 'apply', 91, '{"fit":"backup"}'::jsonb, '{"mode":"automatic"}'::jsonb)
+      `,
+      [job.rows[0]?.id, endpoint.rows[0]?.id, model.rows[0]?.id, `m15-model-${runId}`],
+    );
+    await pool.query(
+      `
+        INSERT INTO provider_sessions(provider_id, label, session_data)
+        VALUES ($1, $2, '{"secrets":{"li_at":"backup-secret"}}'::jsonb)
+      `,
+      [providerId, `M15 Session ${runId}`],
+    );
+    await pool.query(
+      `
+        INSERT INTO settings(key, value, description)
+        VALUES
+          ('ai.candidate_profile', to_jsonb($1::text), 'Candidate profile used for future AI reviews.'),
+          ('ai.runtime', $2::jsonb, 'Runtime parameters for future AI review activities.'),
+          ('ai.active_endpoint_id', to_jsonb($3::text), 'Active AI endpoint id used for future activities.')
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value,
+            description = EXCLUDED.description
+      `,
+      [
+        `Candidate ${runId}`,
+        JSON.stringify({
+          modelName: `m15-model-${runId}`,
+          priorityModelName: `m15-model-${runId}`,
+        }),
+        endpoint.rows[0]?.id,
+      ],
+    );
+
+    const app = await buildApp(readConfig({ NODE_ENV: 'test', API_RUN_MIGRATIONS: 'false' }), {
+      db: pool,
+    });
+    const sections = [
+      'searches',
+      'jobs',
+      'jobSearchPresence',
+      'jobDescriptions',
+      'jobReviews',
+      'providerSessions',
+      'aiSettings',
+      'aiEndpoints',
+    ];
+    const exportResponse = await app.inject({
+      method: 'POST',
+      payload: { sections },
+      url: '/api/v1/debug/backup/export',
+    });
+    const backup = exportResponse.json().data;
+
+    await pool.query('DELETE FROM job_reviews WHERE job_id = $1', [job.rows[0]?.id]);
+    await pool.query('DELETE FROM job_descriptions WHERE job_id = $1', [job.rows[0]?.id]);
+    await pool.query('DELETE FROM job_search_presence WHERE job_id = $1', [job.rows[0]?.id]);
+    await pool.query('DELETE FROM external_jobs WHERE job_id = $1', [job.rows[0]?.id]);
+    await pool.query('DELETE FROM jobs WHERE id = $1', [job.rows[0]?.id]);
+    await pool.query('DELETE FROM searches WHERE id = $1', [search.rows[0]?.id]);
+    await pool.query('DELETE FROM provider_sessions WHERE label = $1', [`M15 Session ${runId}`]);
+    await pool.query('DELETE FROM ai_models WHERE id = $1', [model.rows[0]?.id]);
+    await pool.query('DELETE FROM ai_endpoints WHERE id = $1', [endpoint.rows[0]?.id]);
+    await pool.query(
+      "DELETE FROM settings WHERE key IN ('ai.candidate_profile', 'ai.runtime', 'ai.active_endpoint_id')",
+    );
+
+    const importResponse = await app.inject({
+      method: 'POST',
+      payload: {
+        backup,
+        mode: 'merge',
+        sections,
+      },
+      url: '/api/v1/debug/backup/import',
+    });
+    const restored = await pool.query<{
+      active_endpoint: unknown;
+      descriptions: number;
+      endpoints: number;
+      jobs: number;
+      models: number;
+      presence: number;
+      reviews: number;
+      searches: number;
+      sessions: number;
+    }>(
+      `
+        SELECT
+          (SELECT COUNT(*)::integer FROM searches WHERE id = $1::uuid) AS searches,
+          (SELECT COUNT(*)::integer FROM jobs WHERE id = $2::uuid) AS jobs,
+          (SELECT COUNT(*)::integer FROM job_search_presence WHERE job_id = $2::uuid AND search_id = $1::uuid) AS presence,
+          (SELECT COUNT(*)::integer FROM job_descriptions WHERE job_id = $2::uuid) AS descriptions,
+          (SELECT COUNT(*)::integer FROM job_reviews WHERE job_id = $2::uuid) AS reviews,
+          (SELECT COUNT(*)::integer FROM provider_sessions WHERE label = $3) AS sessions,
+          (SELECT COUNT(*)::integer FROM ai_endpoints WHERE id = $4::uuid AND is_active = true) AS endpoints,
+          (SELECT COUNT(*)::integer FROM ai_models WHERE id = $5::uuid) AS models,
+          (SELECT value FROM settings WHERE key = 'ai.active_endpoint_id') AS active_endpoint
+      `,
+      [
+        search.rows[0]?.id,
+        job.rows[0]?.id,
+        `M15 Session ${runId}`,
+        endpoint.rows[0]?.id,
+        model.rows[0]?.id,
+      ],
+    );
+
+    await app.close();
+
+    expect(exportResponse.statusCode).toBe(200);
+    expect(backup).toMatchObject({
+      format: 'joblens.backup',
+      version: 1,
+      sections: {
+        aiSettings: expect.objectContaining({
+          candidateProfile: `Candidate ${runId}`,
+        }),
+      },
+    });
+    expect(JSON.stringify(backup.sections.providerSessions)).toContain('backup-secret');
+    expect(importResponse.statusCode).toBe(200);
+    expect(importResponse.json()).toMatchObject({
+      data: {
+        sections: {
+          jobs: expect.objectContaining({ imported: expect.any(Number) }),
+          providerSessions: expect.objectContaining({ imported: expect.any(Number) }),
+          searches: expect.objectContaining({ imported: expect.any(Number) }),
+        },
+      },
+    });
+    expect(restored.rows[0]).toMatchObject({
+      descriptions: 1,
+      endpoints: 1,
+      jobs: 1,
+      models: 1,
+      presence: 1,
+      reviews: 1,
+      searches: 1,
+      sessions: 1,
+    });
+    expect(restored.rows[0]?.active_endpoint).toBe(endpoint.rows[0]?.id);
+  }, 30_000);
+
   it('resets application data from the debug endpoint while keeping schema seeds', async () => {
     await runMigrations(pool);
     const provider = await pool.query<{ id: string }>(
@@ -2141,6 +2380,7 @@ describe('database migrations', () => {
     );
     const providerId = provider.rows[0]?.id;
     expect(providerId).toBeTruthy();
+    await pool.query('UPDATE ai_endpoints SET is_active = false WHERE is_active = true');
 
     const search = await pool.query<{ id: string }>(
       `

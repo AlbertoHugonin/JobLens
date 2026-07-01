@@ -376,8 +376,8 @@ Headers runtime minimi:
 Headers extra vanno usati solo se dimostrati necessari da fixture/HAR reali e
 non devono introdurre nuovi segreti persistiti.
 
-Il file HAR completo non deve essere conservato dopo l'importazione. Log, debug
-ed export devono oscurare cookie, CSRF token e altri segreti.
+Il file HAR completo non deve essere conservato dopo l'importazione. Log, bundle
+debug ed export operativi devono oscurare cookie, CSRF token e altri segreti.
 
 Il debug HAR deve mostrare senza segreti: numero richieste job card trovate,
 host, path, presenza cookie/CSRF, parametri query, decoration id, count/start e
@@ -419,6 +419,8 @@ offerte.
 - Se un job appare in almeno una ricerca completa resta attivo.
 - Se non appare piu in nessuna ricerca completa diventa fuori dalle ricerche.
 - Solo i job fuori dalle ricerche vengono verificati direttamente.
+- I controlli disponibilita riusciti possono bloccare nuovi controlli sullo
+  stesso job per una finestra configurabile; `0` disabilita il debounce.
 - La chiusura richiede conferme configurabili o segnale definitivo del provider.
 - Se lo stesso external ID riappare, il job viene riattivato mantenendo storico.
 
@@ -484,6 +486,10 @@ offerte.
 - Export completi e bundle debug sono attivita in background.
 - Il bundle debug include configurazione non segreta, versioni servizi, stato
   code, attivita recenti, errori, conteggi e parametri AI.
+- Debug include import/export JSON selettivo per ricerche, offerte,
+  collegamenti offerte-ricerche, descrizioni, review AI, sessioni provider,
+  impostazioni AI ed endpoint/modelli AI. L'import puo unire i dati o sostituire
+  prima solo le sezioni selezionate.
 - Debug puo cancellare review AI per modello o tutte le review, senza eliminare
   attivita e log.
 
@@ -650,6 +656,8 @@ Note:
 
 - `POST /api/v1/exports/jobs-reviews`
 - `POST /api/v1/debug/bundle`
+- `POST /api/v1/debug/backup/export`
+- `POST /api/v1/debug/backup/import`
 - `POST /api/v1/debug/reset-app` con conferma esplicita `RESET`, disponibile
   come strumento distruttivo di debug per svuotare dati applicativi e
   impostazioni personalizzate mantenendo schema e seed minimi.
@@ -713,7 +721,9 @@ failed -> queued
 - Dashboard, Debug e Attivita usano query aggregate.
 - Export grandi sono streammati o generati in background.
 - Cookie, CSRF token e sessioni provider sono segreti.
-- Export e debug non includono segreti.
+- Bundle debug ed export operativi non includono segreti; il backup JSON
+  selettivo puo includere segreti quando viene selezionata la sezione sessioni
+  provider.
 - Pianificazione, pause e limiti servono a controllare carico e risorse, non ad
   aggirare policy dei provider.
 - In assenza di login applicativo, il deploy va considerato privato e protetto
@@ -741,7 +751,7 @@ Copertura automatica richiesta:
 Copertura oggi presente:
 
 - Unit/API/DB per health, schema, provider LinkedIn, settings, ricerche,
-  offerte, attivita, AI settings e manutenzione.
+  offerte, attivita, AI settings, manutenzione e backup selettivo.
 - Unit/worker per query LinkedIn, parsing payload, sessione, descrizioni,
   heartbeat e logica di base.
 - Integrazione DB worker con fixture per raccolta LinkedIn, descrizioni,

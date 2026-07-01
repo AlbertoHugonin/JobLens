@@ -9,6 +9,9 @@ fn test_config(worker_id: &str) -> WorkerConfig {
         collection_page_delay: Duration::ZERO,
         database_url: None,
         linkedin_availability_cooldown: Duration::ZERO,
+        // Debounce disabled by default in tests so existing availability-enqueue
+        // assertions are unaffected; the debounce test overrides this per-case.
+        linkedin_availability_recheck: Duration::ZERO,
         linkedin_description_cooldown: Duration::ZERO,
         dummy_duration: Duration::from_millis(100),
         heartbeat_interval: Duration::from_millis(25),

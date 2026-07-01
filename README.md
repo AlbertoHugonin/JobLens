@@ -31,7 +31,9 @@ other sources can be added later.
   tracked "activities" with live progress, logs, and cancel/retry controls.
 - **Portable debug/export data** — single-offer exports include provider/search
   metadata, the latest description, and full AI review details (`result`,
-  `metrics`, `rawOutput`) without provider secrets.
+  `metrics`, `rawOutput`) without provider secrets. Debug mode also supports
+  selective JSON import/export for searches, offers, descriptions, AI reviews,
+  provider sessions, and AI configuration.
 
 ## How it works
 

@@ -200,6 +200,7 @@ pub(crate) async fn run_collect_activity(
             pool,
             &search.search_id,
             &activity.id,
+            config.linkedin_availability_recheck,
         )
         .await?;
         stats.jobs_marked_missing = availability_outcome.0;
@@ -314,7 +315,11 @@ async fn mark_missing_linkedin_jobs_and_enqueue_availability(
     pool: &PgPool,
     search_id: &str,
     activity_id: &str,
+    recheck: Duration,
 ) -> Result<(i32, i32)> {
+    // Seconds directly (not duration_as_i64_seconds, which floors at 1) so a
+    // zero window disables the debounce and every fall-off is re-checked.
+    let recheck_seconds = i64::try_from(recheck.as_secs()).unwrap_or(i64::MAX);
     let result = sqlx::query(
         r#"
         WITH stale_presence AS (
@@ -371,6 +376,19 @@ async fn mark_missing_linkedin_jobs_and_enqueue_availability(
                 AND existing_activity.subject_id = updated.job_id
                 AND existing_activity.status IN ('queued', 'running', 'interrupted')
             )
+            -- Debounce: skip jobs already checked successfully within the recheck
+            -- window so the search-result shuffle doesn't re-queue a live check on
+            -- every bounce. $3 = 0 disables it (finished_at > now() is never true).
+            AND NOT EXISTS (
+              SELECT 1
+              FROM activities recent_check
+              WHERE recent_check.activity_type = 'linkedin_availability'
+                AND recent_check.subject_type = 'job'
+                AND recent_check.subject_id = updated.job_id
+                AND recent_check.status = 'success'
+                AND recent_check.finished_at IS NOT NULL
+                AND recent_check.finished_at > now() - make_interval(secs => $3::bigint)
+            )
           ORDER BY updated.job_id, external_jobs.created_at ASC
         ),
         inserted AS (
@@ -413,6 +431,7 @@ async fn mark_missing_linkedin_jobs_and_enqueue_availability(
     )
     .bind(search_id)
     .bind(activity_id)
+    .bind(recheck_seconds)
     .fetch_one(pool)
     .await
     .context("mark missing LinkedIn jobs failed")?;

@@ -9,6 +9,7 @@ pub struct WorkerConfig {
     pub(crate) collection_page_delay: Duration,
     pub(crate) database_url: Option<String>,
     pub(crate) linkedin_availability_cooldown: Duration,
+    pub(crate) linkedin_availability_recheck: Duration,
     pub(crate) linkedin_description_cooldown: Duration,
     pub(crate) dummy_duration: Duration,
     pub(crate) heartbeat_interval: Duration,
@@ -50,6 +51,16 @@ pub fn read_config() -> WorkerConfig {
         linkedin_availability_cooldown: read_duration_ms(
             "WORKER_LINKEDIN_AVAILABILITY_COOLDOWN_MS",
             5_000,
+        ),
+        // Debounce window: don't re-queue an availability check for a job that
+        // was already checked successfully within this period. LinkedIn search
+        // results shuffle between runs, so still-open jobs repeatedly drop out
+        // of (and back into) a search's results; without this every bounce
+        // queued a fresh live check, flooding the queue when there are many
+        // listings. Set WORKER_LINKEDIN_AVAILABILITY_RECHECK_MS=0 to disable.
+        linkedin_availability_recheck: read_duration_ms(
+            "WORKER_LINKEDIN_AVAILABILITY_RECHECK_MS",
+            86_400_000,
         ),
         // LinkedIn job-description pages are fetched one at a time; this is the
         // cooldown before another live description fetch can be claimed.

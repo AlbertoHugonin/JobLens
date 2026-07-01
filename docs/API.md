@@ -111,10 +111,45 @@ field with `{ key, label, description, enabled, maxItems }`.
 - `DELETE /api/v1/ai/reviews`
 - `POST /api/v1/exports/jobs-reviews`
 - `POST /api/v1/debug/bundle`
+- `POST /api/v1/debug/backup/export`
+- `POST /api/v1/debug/backup/import`
 - `POST /api/v1/debug/reset-app` — destructive debug-only reset. Requires
   `{ "confirmation": "RESET" }`, deletes all application data and custom
   settings, then restores the minimal provider/settings seed data while keeping
   schema migrations.
+
+Selective debug backups use a JSON document shaped as
+`{ "format": "joblens.backup", "version": 1, "exportedAt", "schemaVersion", "sections" }`.
+Both export and import require a non-empty `sections` array. Allowed sections are
+`searches`, `jobs`, `jobSearchPresence`, `jobDescriptions`, `jobReviews`,
+`providerSessions`, `aiSettings`, and `aiEndpoints` (including models).
+
+`POST /api/v1/debug/backup/export` accepts:
+
+```json
+{ "sections": ["searches", "jobs", "jobSearchPresence", "jobDescriptions"] }
+```
+
+`POST /api/v1/debug/backup/import` accepts:
+
+```json
+{
+  "backup": {
+    "exportedAt": "2026-07-01T12:00:00.000Z",
+    "format": "joblens.backup",
+    "schemaVersion": 0,
+    "sections": { "searches": [] },
+    "version": 1
+  },
+  "mode": "merge",
+  "sections": ["searches"]
+}
+```
+
+`mode` is `merge` or `replace` and defaults to `merge` when omitted. `replace`
+deletes only the selected sections before importing. Import responses return
+per-section `deleted`, `imported`, and `skipped` counts. Backups that include
+`providerSessions` contain provider secrets.
 
 ## Worker metrics
 
@@ -136,6 +171,10 @@ How a collection run behaves once queued as a `linkedin_collect` activity:
   - enqueues `linkedin_describe` activities for jobs without a description;
   - marks jobs missing from all searches as `missing_from_searches`;
   - enqueues `linkedin_availability` checks only for those outside-search jobs.
+- Successful `linkedin_availability` checks debounce later checks for the same
+  job for `WORKER_LINKEDIN_AVAILABILITY_RECHECK_MS` (default 24 hours; `0`
+  disables the debounce), so normal search-result shuffling does not flood the
+  queue.
 - Job descriptions are deduplicated per job by a stable hash of the normalized
   text. If the same provider external ID reappears in a later collection, the
   job is reactivated as `active` while keeping its existing descriptions and
