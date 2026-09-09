@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-joblens}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-joblens}
       POSTGRES_DB: ${POSTGRES_DB:-joblens}
-    ports:
-      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -30,12 +28,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://joblens:joblens@postgres:5432/joblens}
       AI_ENDPOINT_URL: ${AI_ENDPOINT_URL:-}
     ports:
-      - '${API_PORT:-3000}:${API_PORT:-3000}'
+      - '${API_HOST_PORT:-3000}:${API_PORT:-3000}'
     depends_on:
       postgres:
         condition: service_healthy
-    # Healthcheck runs inside the container and reads the port the API actually
-    # binds to (API_PORT), so it keeps working when the port is changed at deploy.
     healthcheck:
       test:
         [
@@ -66,13 +62,11 @@ services:
       WORKER_LINKEDIN_DESCRIPTION_COOLDOWN_MS: ${WORKER_LINKEDIN_DESCRIPTION_COOLDOWN_MS:-5000}
       WORKER_LINKEDIN_AVAILABILITY_COOLDOWN_MS: ${WORKER_LINKEDIN_AVAILABILITY_COOLDOWN_MS:-5000}
       DATABASE_URL: ${DATABASE_URL:-postgresql://joblens:joblens@postgres:5432/joblens}
-    ports:
-      - '${WORKER_PORT:-8090}:${WORKER_PORT:-8090}'
+    expose:
+      - '${WORKER_PORT:-8090}'
     depends_on:
       postgres:
         condition: service_healthy
-    # `$$WORKER_PORT` is escaped so the container shell expands it at runtime to
-    # the port the worker actually binds to, surviving any port change at deploy.
     healthcheck:
       test: ['CMD-SHELL', 'curl -fsS "http://127.0.0.1:$${WORKER_PORT:-8090}/health"']
       interval: 10s
