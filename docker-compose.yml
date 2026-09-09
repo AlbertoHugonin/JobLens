@@ -1,4 +1,3 @@
-# Komodo webhook integration test; safe comment only.
 services:
   postgres:
     image: postgres:16-alpine
